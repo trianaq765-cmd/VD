@@ -1,0 +1,122 @@
+-- AUTO SERVER HOP (EXECUTOR VERSION) - RANDOM HOP
+
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+
+local PlaceId = game.PlaceId
+local Player = Players.LocalPlayer
+
+-- Check for required HTTP function availability
+local function getHttpRequestFunction()
+    if syn and syn.request then return syn.request end
+    if request then return request end
+    if game.HttpGetAsync then 
+        return function(tab) 
+            return game:HttpGetAsync(tab.Url) 
+        end
+    end
+    return nil
+end
+
+local httpFunction = getHttpRequestFunction()
+
+if not httpFunction then
+    -- Fallback message if HTTP is blocked
+    local starterGui = game:GetService("StarterGui")
+    starterGui:SetCore("SendNotification", {
+        Title = "❌ Auto Hop Gagal",
+        Text = "Tidak ada fungsi HTTP request yang terdeteksi. Script diblokir.",
+        Duration = 10
+    })
+    return
+end
+
+-- =========================================================================
+-- CORE LOGIC
+-- =========================================================================
+
+local function getServers()
+    -- Sort order can be Asc (sepi dulu) or Desc (ramai dulu), but we filter random later
+    local url = "https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+    
+    local success, response = pcall(function()
+        local result = httpFunction({
+            Url = url,
+            Method = "GET"
+        })
+        return result
+    end)
+    
+    if not success or not response then
+        warn("[AutoHop] Gagal koneksi atau response kosong.")
+        return nil
+    end
+
+    local body = response.Body or response 
+    
+    if type(body) == "string" and body:sub(1, 1) == "{" then
+        local data = HttpService:JSONDecode(body)
+        return data.data
+    else
+        warn("[AutoHop] Gagal decode JSON. Response:", body)
+        return nil
+    end
+end
+
+local function executeAutoHop()
+    print("🌐 [AutoHop] Mencari server acak yang tersedia...")
+    
+    local servers = getServers()
+    
+    if not servers then 
+        warn("❌ [AutoHop] Gagal mendapatkan daftar server. Mencoba lagi dalam 5 detik...")
+        wait(5)
+        return executeAutoHop() -- Rekursif jika gagal
+    end
+    
+    local availableServers = {}
+    for _, server in pairs(servers) do
+        -- Kriteria: Bukan server ini, dan belum penuh
+        if server.id ~= game.JobId and server.playing < server.maxPlayers then
+            table.insert(availableServers, server)
+        end
+    end
+
+    if #availableServers > 0 then
+        -- Pilih server secara acak
+        local targetServer = availableServers[math.random(1, #availableServers)]
+        
+        print("✅ [AutoHop] Server acak ditemukan!")
+        print("   Players: " .. targetServer.playing .. "/" .. targetServer.maxPlayers)
+        print("🚀 [AutoHop] Teleporting...")
+        
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "✅ Server Acak Ditemukan!",
+            Text = "Hop ke server dengan " .. targetServer.playing .. " pemain.",
+            Duration = 5
+        })
+        
+        TeleportService:TeleportToPlaceInstance(PlaceId, targetServer.id, Player)
+        return true
+    else
+        print("⚠️ [AutoHop] Tidak ada server yang tersedia saat ini (semua penuh/diblokir).")
+        print("🔄 [AutoHop] Mencoba mencari server lagi dalam 10 detik...")
+        
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "⚠️ Mencari Server...",
+            Text = "Tidak ada server tersedia. Mencoba lagi.",
+            Duration = 5
+        })
+        
+        wait(10)
+        return executeAutoHop() -- Rekursif jika tidak menemukan
+    end
+end
+
+-- EXECUTE SCRIPT
+task.spawn(function()
+    executeAutoHop()
+end)
+
+print("🚀 Auto Hop Script Executed! (Random Server Mode)")
