@@ -1,0 +1,481 @@
+-- ===================================================================
+--                  ESP TEAMMATE - COMPACT UI (FIXED)
+-- UI lebih kecil, tidak mengganggu gameplay
+-- ===================================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-- ================= KONFIGURASI =================
+local Config = {
+    MaxDistance = 500,
+    ShowAllPlayers = true,       -- TRUE = tampilkan semua player kecuali killer
+    ExcludeLocalPlayer = true,
+    
+    -- UI Settings
+    ShowUsername = true,
+    ShowStatusIcon = true,
+    ShowStatusText = false,      -- Dimatikan untuk UI lebih simple
+    ShowDistance = true,
+    
+    -- Ukuran UI (lebih kecil)
+    BillboardWidth = 100,
+    BillboardHeight = 40,
+    IconSize = 12,               -- Emoji lebih kecil
+    NameSize = 9,                -- Nama lebih kecil
+    StatusSize = 8,
+    DistanceSize = 8,            -- Jarak lebih kecil
+    StudsOffsetY = 2,
+    
+    KillerNames = {
+        "killer", "murderer", "slasher", "hidden", 
+        "stalker", "masked", "abysswalker"
+    },
+    
+    HighlightEnabled = true,
+    DebugMode = true,            -- ON untuk cek apakah terdetect
+    
+    -- Warna
+    HealthyColor = Color3.fromRGB(100, 255, 100),
+    InjuredColor = Color3.fromRGB(255, 200, 50),
+    DownedColor = Color3.fromRGB(255, 50, 50),
+    DefaultColor = Color3.fromRGB(100, 150, 255),
+    
+    HighlightTransparency = 0.7,
+}
+
+-- ================= DATA =================
+local teammateESP = {}
+
+-- ================= FUNGSI BANTU =================
+local function getHRP(player)
+    return player and player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHumanoid(player)
+    return player and player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+end
+
+local function getDistance(pos1, pos2)
+    return (pos1 - pos2).Magnitude
+end
+
+local function debugPrint(message)
+    if Config.DebugMode then
+        print("[ESP] " .. message)
+    end
+end
+
+-- ================= DETEKSI KILLER =================
+local function isKiller(player)
+    if not player then return false end
+    
+    local name = string.lower(player.Name)
+    for _, killerName in ipairs(Config.KillerNames) do
+        if name:find(killerName) then
+            debugPrint(player.Name .. " = KILLER")
+            return true
+        end
+    end
+    
+    local displayName = string.lower(player.DisplayName or "")
+    for _, killerName in ipairs(Config.KillerNames) do
+        if displayName:find(killerName) then
+            debugPrint(player.Name .. " = KILLER (display name)")
+            return true
+        end
+    end
+    
+    local role = player:GetAttribute("Role") or player:GetAttribute("Team")
+    if role then
+        local roleStr = string.lower(tostring(role))
+        if roleStr:find("killer") or roleStr:find("murderer") or roleStr:find("evil") then
+            debugPrint(player.Name .. " = KILLER (role)")
+            return true
+        end
+    end
+    
+    return false
+end
+
+-- ================= DETEKSI TEAMMATE =================
+local function isTeammate(player)
+    if not player then return false end
+    if player == LocalPlayer and Config.ExcludeLocalPlayer then return false end
+    
+    if isKiller(player) then return false end
+    
+    if Config.ShowAllPlayers then
+        debugPrint(player.Name .. " = TEAMMATE (ShowAllPlayers mode)")
+        return true
+    end
+    
+    if LocalPlayer.Team and player.Team then
+        if LocalPlayer.Team == player.Team then
+            debugPrint(player.Name .. " = TEAMMATE (same team)")
+            return true
+        end
+    end
+    
+    if LocalPlayer.TeamColor and player.TeamColor then
+        if LocalPlayer.TeamColor == player.TeamColor then
+            debugPrint(player.Name .. " = TEAMMATE (same team color)")
+            return true
+        end
+    end
+    
+    local myRole = LocalPlayer:GetAttribute("Role") or LocalPlayer:GetAttribute("Team")
+    local theirRole = player:GetAttribute("Role") or player:GetAttribute("Team")
+    
+    if myRole and theirRole then
+        local myRoleStr = string.lower(tostring(myRole))
+        local theirRoleStr = string.lower(tostring(theirRole))
+        
+        if myRoleStr == theirRoleStr then
+            debugPrint(player.Name .. " = TEAMMATE (same role)")
+            return true
+        end
+        
+        if myRoleStr:find("survivor") and theirRoleStr:find("survivor") then
+            debugPrint(player.Name .. " = TEAMMATE (both survivors)")
+            return true
+        end
+    end
+    
+    if not LocalPlayer.Team and not LocalPlayer:GetAttribute("Role") then
+        debugPrint(player.Name .. " = TEAMMATE (no team system)")
+        return true
+    end
+    
+    return false
+end
+
+-- ================= DETEKSI STATUS =================
+local function getPlayerStatus(player)
+    local humanoid = getHumanoid(player)
+    if not humanoid then return "Unknown", Config.DefaultColor, "●" end
+    
+    local healthPercent = (humanoid.Health / humanoid.MaxHealth) * 100
+    
+    local state = player:GetAttribute("State") or player:GetAttribute("PlayerState")
+    if state then
+        local stateStr = string.lower(tostring(state))
+        
+        if stateStr:find("down") or stateStr:find("dying") then
+            return "Down", Config.DownedColor, "●"
+        elseif stateStr:find("injured") or stateStr:find("hurt") then
+            return "Hurt", Config.InjuredColor, "●"
+        elseif stateStr:find("healthy") then
+            return "OK", Config.HealthyColor, "●"
+        elseif stateStr:find("hooked") then
+            return "Hook", Config.DownedColor, "●"
+        end
+    end
+    
+    if player.Character then
+        local downedTag = player.Character:FindFirstChild("Downed")
+        if downedTag and downedTag:IsA("BoolValue") and downedTag.Value then
+            return "Down", Config.DownedColor, "●"
+        end
+        
+        local injuredTag = player.Character:FindFirstChild("Injured")
+        if injuredTag and injuredTag:IsA("BoolValue") and injuredTag.Value then
+            return "Hurt", Config.InjuredColor, "●"
+        end
+    end
+    
+    if healthPercent < 30 then
+        return "Low", Config.DownedColor, "●"
+    elseif healthPercent < 70 then
+        return "Hurt", Config.InjuredColor, "●"
+    else
+        return "OK", Config.HealthyColor, "●"
+    end
+end
+
+-- ================= ESP IMPLEMENTATION =================
+local function createHighlight(player)
+    if not player.Character then return nil end
+    
+    -- Hapus highlight lama jika ada
+    local oldHighlight = player.Character:FindFirstChild("Teammate_Highlight")
+    if oldHighlight then
+        oldHighlight:Destroy()
+    end
+    
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "Teammate_Highlight"
+    highlight.Adornee = player.Character
+    highlight.FillColor = Config.DefaultColor
+    highlight.OutlineColor = Color3.new(1, 1, 1)
+    highlight.FillTransparency = Config.HighlightTransparency
+    highlight.OutlineTransparency = 0.5
+    highlight.Parent = player.Character
+    
+    debugPrint("Created highlight for " .. player.Name)
+    return highlight
+end
+
+local function createBillboard(player)
+    local hrp = getHRP(player)
+    if not hrp then 
+        debugPrint("Failed to get HRP for " .. player.Name)
+        return nil 
+    end
+    
+    -- Hapus billboard lama jika ada
+    local oldBB = hrp:FindFirstChild("Teammate_Billboard")
+    if oldBB then
+        oldBB:Destroy()
+    end
+    
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "Teammate_Billboard"
+    bb.Size = UDim2.new(0, Config.BillboardWidth, 0, Config.BillboardHeight)
+    bb.StudsOffset = Vector3.new(0, Config.StudsOffsetY, 0)
+    bb.AlwaysOnTop = true
+    bb.MaxDistance = Config.MaxDistance
+    bb.Parent = hrp
+    
+    local container = Instance.new("Frame", bb)
+    container.Name = "Container"
+    container.BackgroundTransparency = 1
+    container.Size = UDim2.new(1, 0, 1, 0)
+    
+    -- Layout sederhana: Icon -> Nama -> Jarak (vertikal)
+    local yPos = 0
+    local itemHeight = 1 / 3
+    
+    -- Status Icon
+    if Config.ShowStatusIcon then
+        local icon = Instance.new("TextLabel", container)
+        icon.Name = "Icon"
+        icon.BackgroundTransparency = 1
+        icon.Size = UDim2.new(1, 0, itemHeight, 0)
+        icon.Position = UDim2.new(0, 0, yPos, 0)
+        icon.Font = Enum.Font.GothamBold
+        icon.TextSize = Config.IconSize
+        icon.TextColor3 = Config.HealthyColor
+        icon.TextXAlignment = Enum.TextXAlignment.Center
+        icon.TextYAlignment = Enum.TextYAlignment.Center
+        icon.Text = "●"
+        yPos = yPos + itemHeight
+    end
+    
+    -- Username
+    if Config.ShowUsername then
+        local nameLabel = Instance.new("TextLabel", container)
+        nameLabel.Name = "Username"
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Size = UDim2.new(1, 0, itemHeight, 0)
+        nameLabel.Position = UDim2.new(0, 0, yPos, 0)
+        nameLabel.Font = Enum.Font.GothamBold
+        nameLabel.TextSize = Config.NameSize
+        nameLabel.TextColor3 = Color3.new(1, 1, 1)
+        nameLabel.TextXAlignment = Enum.TextXAlignment.Center
+        nameLabel.TextYAlignment = Enum.TextYAlignment.Center
+        nameLabel.Text = player.Name
+        yPos = yPos + itemHeight
+    end
+    
+    -- Distance
+    if Config.ShowDistance then
+        local distLabel = Instance.new("TextLabel", container)
+        distLabel.Name = "Distance"
+        distLabel.BackgroundTransparency = 1
+        distLabel.Size = UDim2.new(1, 0, itemHeight, 0)
+        distLabel.Position = UDim2.new(0, 0, yPos, 0)
+        distLabel.Font = Enum.Font.Gotham
+        distLabel.TextSize = Config.DistanceSize
+        distLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+        distLabel.TextXAlignment = Enum.TextXAlignment.Center
+        distLabel.TextYAlignment = Enum.TextYAlignment.Center
+        distLabel.Text = "0m"
+    end
+    
+    debugPrint("Created billboard for " .. player.Name)
+    return bb
+end
+
+local function applyESP(player)
+    if teammateESP[player] then 
+        debugPrint(player.Name .. " already has ESP")
+        return 
+    end
+    
+    if not isTeammate(player) then 
+        debugPrint(player.Name .. " is not a teammate")
+        return 
+    end
+    
+    if not player.Character then
+        debugPrint(player.Name .. " has no character yet")
+        return
+    end
+    
+    debugPrint("Applying ESP to: " .. player.Name)
+    
+    local highlight = nil
+    if Config.HighlightEnabled then
+        highlight = createHighlight(player)
+    end
+    
+    local billboard = createBillboard(player)
+    
+    if highlight or billboard then
+        teammateESP[player] = {
+            highlight = highlight,
+            billboard = billboard,
+            player = player
+        }
+        debugPrint("✅ ESP applied successfully to: " .. player.Name)
+    else
+        debugPrint("❌ Failed to create ESP for: " .. player.Name)
+    end
+end
+
+local function cleanupESP(player)
+    if teammateESP[player] then
+        if teammateESP[player].highlight then
+            pcall(function() teammateESP[player].highlight:Destroy() end)
+        end
+        if teammateESP[player].billboard then
+            pcall(function() teammateESP[player].billboard:Destroy() end)
+        end
+        teammateESP[player] = nil
+        debugPrint("Cleaned up ESP for: " .. player.Name)
+    end
+end
+
+-- ================= UPDATE ESP =================
+local function updateESP()
+    local myHRP = getHRP(LocalPlayer)
+    if not myHRP then return end
+    
+    for player, elements in pairs(teammateESP) do
+        if player and player.Parent and player.Character then
+            local status, color, icon = getPlayerStatus(player)
+            
+            -- Update highlight color
+            if elements.highlight and elements.highlight.Parent then
+                elements.highlight.FillColor = color
+            end
+            
+            -- Update billboard
+            if elements.billboard and elements.billboard.Parent then
+                local container = elements.billboard.Container
+                
+                -- Update icon
+                if Config.ShowStatusIcon then
+                    local iconLabel = container:FindFirstChild("Icon")
+                    if iconLabel then
+                        iconLabel.TextColor3 = color
+                    end
+                end
+                
+                -- Update distance
+                if Config.ShowDistance then
+                    local targetHRP = getHRP(player)
+                    if targetHRP then
+                        local dist = getDistance(myHRP.Position, targetHRP.Position)
+                        
+                        local distLabel = container:FindFirstChild("Distance")
+                        if distLabel then
+                            distLabel.Text = string.format("%.0fm", dist)
+                        end
+                    end
+                end
+            else
+                -- Billboard hilang, recreate
+                debugPrint("Billboard lost for " .. player.Name .. ", recreating...")
+                cleanupESP(player)
+                applyESP(player)
+            end
+        else
+            cleanupESP(player)
+        end
+    end
+end
+
+-- ================= SETUP PLAYERS =================
+local function setupPlayer(player)
+    if player == LocalPlayer and Config.ExcludeLocalPlayer then 
+        debugPrint("Skipping local player")
+        return 
+    end
+    
+    debugPrint("Setting up player: " .. player.Name)
+    
+    -- Tunggu character load
+    if player.Character then
+        task.wait(0.5)
+        applyESP(player)
+    end
+    
+    player.CharacterAdded:Connect(function(char)
+        debugPrint(player.Name .. " spawned")
+        cleanupESP(player)
+        task.wait(0.5)
+        applyESP(player)
+    end)
+    
+    player.AncestryChanged:Connect(function()
+        if not player:IsDescendantOf(Players) then
+            debugPrint(player.Name .. " left the game")
+            cleanupESP(player)
+        end
+    end)
+end
+
+-- ================= INIT =================
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("👥 ESP TEAMMATE - COMPACT UI")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🔍 Scanning players...")
+
+for _, player in ipairs(Players:GetPlayers()) do
+    setupPlayer(player)
+end
+
+Players.PlayerAdded:Connect(setupPlayer)
+
+-- Main update loop
+RunService.Heartbeat:Connect(function()
+    updateESP()
+end)
+
+-- Periodic re-apply
+task.spawn(function()
+    while task.wait(5) do
+        debugPrint("━━━ Periodic check ━━━")
+        for _, player in ipairs(Players:GetPlayers()) do
+            if isTeammate(player) and not teammateESP[player] then
+                debugPrint("Re-applying ESP to: " .. player.Name)
+                applyESP(player)
+            end
+        end
+    end
+end)
+
+task.wait(2)
+
+local teammateCount = 0
+for _, player in ipairs(Players:GetPlayers()) do
+    if isTeammate(player) then
+        teammateCount = teammateCount + 1
+    end
+end
+
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print(string.format("✅ %d teammates detected", teammateCount))
+print("📏 UI Size: " .. Config.BillboardWidth .. "x" .. Config.BillboardHeight)
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+pcall(function()
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "👥 ESP Teammate Active",
+        Text = teammateCount .. " teammates found!",
+        Duration = 3,
+    })
+end)
