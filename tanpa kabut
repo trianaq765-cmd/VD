@@ -1,0 +1,108 @@
+-- NO FOG & CONTROLLED BRIGHTNESS (20% reduction from max)
+
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+
+-- Configuration for controlled brightness
+local TARGET_BRIGHTNESS = 1.5 -- Brightness yang lebih moderat (default RBLX = 2)
+local TARGET_AMBIENT = Color3.fromRGB(200, 200, 200) -- Ambient light yang tidak seputih 255
+local TARGET_CLOCK_TIME = 14.5 -- Set waktu untuk stabilitas (2:30 PM)
+
+-- Function to format time for notification
+local function formatTime(floatTime)
+    local hours = math.floor(floatTime) % 24
+    local minutes = math.floor((floatTime - hours) * 60)
+    return string.format("%02d:%02d", hours, minutes)
+end
+
+-- Function to apply No Fog and controlled brightness
+local function applyControlledLighting()
+    print("Applying controlled No Fog settings...")
+
+    -- 1. Anti-Fog: Hilangkan Kabut Sepenuhnya
+    Lighting.FogEnd = 100000 
+    Lighting.FogStart = 0
+    
+    -- 2. Controlled Brightness: Cerah tapi tidak silau
+    Lighting.Brightness = TARGET_BRIGHTNESS
+    Lighting.Ambient = TARGET_AMBIENT
+    Lighting.OutdoorAmbient = TARGET_AMBIENT
+    
+    -- 3. Set Waktu: Tetap, tidak random, untuk stabilitas
+    Lighting.ClockTime = TARGET_CLOCK_TIME
+    
+    -- 4. Shadow Control: Hilangkan bayangan berlebihan (Opsional)
+    Lighting.GlobalShadows = false
+    
+    -- 5. Disable/Remove Visual Effects (Haze, Bloom, dll.)
+    for _, obj in pairs(Lighting:GetChildren()) do
+        if obj:IsA("Atmosphere") then
+            obj.Density = 0
+            obj.Offset = 0
+            obj.Glare = 0
+            obj.Haze = 0
+        elseif obj:IsA("BloomEffect") or obj:IsA("BlurEffect") or 
+               obj:IsA("ColorCorrectionEffect") or obj:IsA("SunRaysEffect") or 
+               obj:IsA("DepthOfFieldEffect") then
+            obj.Enabled = false
+        end
+    end
+    
+    print("✅ No Fog & Controlled Brightness applied.")
+end
+
+-- Function to monitor and re-apply settings
+local function monitorControlledLighting()
+    -- Enforce No Fog
+    if Lighting.FogEnd < 90000 or Lighting.FogStart ~= 0 then
+        Lighting.FogEnd = 100000
+        Lighting.FogStart = 0
+    end
+    
+    -- Enforce Controlled Brightness
+    if Lighting.Brightness ~= TARGET_BRIGHTNESS then
+        Lighting.Brightness = TARGET_BRIGHTNESS
+    end
+    
+    -- Enforce time (for stability)
+    if Lighting.ClockTime ~= TARGET_CLOCK_TIME then
+        Lighting.ClockTime = TARGET_CLOCK_TIME
+    end
+    
+    -- Enforce ambient light
+    if Lighting.Ambient ~= TARGET_AMBIENT then
+        Lighting.Ambient = TARGET_AMBIENT
+        Lighting.OutdoorAmbient = TARGET_AMBIENT
+    end
+end
+
+-- Auto-detect new effects added by game scripts and disable them
+Lighting.ChildAdded:Connect(function(child)
+    task.wait(0.1)
+    if child:IsA("Atmosphere") then
+        child.Density = 0
+        child.Offset = 0
+        child.Glare = 0
+        child.Haze = 0
+    elseif child:IsA("BloomEffect") or child:IsA("BlurEffect") or 
+           child:IsA("ColorCorrectionEffect") or child:IsA("SunRaysEffect") then
+        child.Enabled = false
+    end
+end)
+
+-- Execute lighting fix instantly
+applyControlledLighting()
+
+-- Start monitoring loop
+RunService.Heartbeat:Connect(monitorControlledLighting)
+
+
+-- Notification
+StarterGui:SetCore("SendNotification", {
+    Title = "💡 No Fog (20% Less Glare)";
+    Text = "Kabut dihilangkan. Kecerahan diset ke level nyaman " .. TARGET_BRIGHTNESS .. " (" .. formatTime(TARGET_CLOCK_TIME) .. ").";
+    Duration = 5;
+})
+
+print("✅ No Fog with Controlled Brightness loaded and active!")
