@@ -1,0 +1,203 @@
+print("Loading Teleport to Player Script...")
+
+-- Services
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+
+-- GUI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "TeleportGui"
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Main Frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 300, 0, 350)
+MainFrame.Position = UDim2.new(0.5, -150, 0.5, -175)
+MainFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+MainFrame.BorderSizePixel = 2
+MainFrame.BorderColor3 = Color3.fromRGB(255, 255, 255)
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+-- Title
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+Title.Text = "TELEPORT TO PLAYER"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextScaled = true
+Title.Font = Enum.Font.SourceSansBold
+Title.Parent = MainFrame
+
+-- Warning Label
+local Warning = Instance.new("TextLabel")
+Warning.Size = UDim2.new(1, -10, 0, 30)
+Warning.Position = UDim2.new(0, 5, 0, 35)
+Warning.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+Warning.Text = "⚠️ USE ONLY IN YOUR OWN GAME!"
+Warning.TextColor3 = Color3.fromRGB(255, 255, 255)
+Warning.TextScaled = true
+Warning.Font = Enum.Font.SourceSansBold
+Warning.Parent = MainFrame
+
+-- Player List Frame
+local ListFrame = Instance.new("ScrollingFrame")
+ListFrame.Size = UDim2.new(1, -10, 0, 200)
+ListFrame.Position = UDim2.new(0, 5, 0, 70)
+ListFrame.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+ListFrame.BorderSizePixel = 1
+ListFrame.ScrollBarThickness = 8
+ListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+ListFrame.Parent = MainFrame
+
+-- List Layout
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Padding = UDim.new(0, 2)
+UIListLayout.Parent = ListFrame
+
+-- Refresh Button
+local RefreshBtn = Instance.new("TextButton")
+RefreshBtn.Size = UDim2.new(0.48, 0, 0, 30)
+RefreshBtn.Position = UDim2.new(0, 5, 0, 275)
+RefreshBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+RefreshBtn.Text = "🔄 REFRESH"
+RefreshBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+RefreshBtn.TextScaled = true
+RefreshBtn.Font = Enum.Font.SourceSansBold
+RefreshBtn.Parent = MainFrame
+
+-- Close Button
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0.48, 0, 0, 30)
+CloseBtn.Position = UDim2.new(0.52, 0, 0, 275)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+CloseBtn.Text = "❌ CLOSE"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.TextScaled = true
+CloseBtn.Font = Enum.Font.SourceSansBold
+CloseBtn.Parent = MainFrame
+
+-- Status Label
+local Status = Instance.new("TextLabel")
+Status.Size = UDim2.new(1, -10, 0, 30)
+Status.Position = UDim2.new(0, 5, 0, 310)
+Status.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+Status.Text = "Select a player to teleport"
+Status.TextColor3 = Color3.fromRGB(255, 255, 255)
+Status.TextScaled = true
+Status.Font = Enum.Font.SourceSans
+Status.Parent = MainFrame
+
+-- Functions
+local function UpdateStatus(text)
+    Status.Text = text
+    print("Status:", text)
+end
+
+local function TeleportToPlayer(targetPlayer)
+    if targetPlayer and targetPlayer.Character then
+        local targetRootPart = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if targetRootPart then
+            -- Teleport with offset to avoid getting stuck
+            HumanoidRootPart.CFrame = targetRootPart.CFrame * CFrame.new(0, 0, 3)
+            UpdateStatus("Teleported to: " .. targetPlayer.Name)
+        else
+            UpdateStatus("Target has no HumanoidRootPart!")
+        end
+    else
+        UpdateStatus("Target player not found!")
+    end
+end
+
+local function CreatePlayerButton(player)
+    if player == LocalPlayer then return end -- Skip self
+    
+    local PlayerBtn = Instance.new("TextButton")
+    PlayerBtn.Size = UDim2.new(1, -5, 0, 35)
+    PlayerBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+    PlayerBtn.BorderSizePixel = 1
+    PlayerBtn.Parent = ListFrame
+    
+    -- Player name
+    local NameLabel = Instance.new("TextLabel")
+    NameLabel.Size = UDim2.new(0.7, 0, 1, 0)
+    NameLabel.Position = UDim2.new(0, 5, 0, 0)
+    NameLabel.BackgroundTransparency = 1
+    NameLabel.Text = player.Name
+    NameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    NameLabel.TextScaled = true
+    NameLabel.Font = Enum.Font.SourceSans
+    NameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    NameLabel.Parent = PlayerBtn
+    
+    -- Teleport button
+    local TpBtn = Instance.new("TextButton")
+    TpBtn.Size = UDim2.new(0, 60, 0, 25)
+    TpBtn.Position = UDim2.new(1, -65, 0.5, -12)
+    TpBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
+    TpBtn.Text = "TELEPORT"
+    TpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    TpBtn.TextScaled = true
+    TpBtn.Font = Enum.Font.SourceSansBold
+    TpBtn.Parent = PlayerBtn
+    
+    TpBtn.MouseButton1Click:Connect(function()
+        TeleportToPlayer(player)
+    end)
+end
+
+local function RefreshPlayerList()
+    -- Clear existing buttons
+    for _, child in pairs(ListFrame:GetChildren()) do
+        if child:IsA("TextButton") then
+            child:Destroy()
+        end
+    end
+    
+    -- Add players
+    local count = 0
+    for _, player in pairs(Players:GetPlayers()) do
+        CreatePlayerButton(player)
+        count = count + 1
+    end
+    
+    -- Update canvas size
+    ListFrame.CanvasSize = UDim2.new(0, 0, 0, count * 37)
+    UpdateStatus("Found " .. count .. " players")
+end
+
+-- Event Handlers
+RefreshBtn.MouseButton1Click:Connect(RefreshPlayerList)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+    print("Teleport GUI closed")
+end)
+
+-- Auto refresh when players join/leave
+Players.PlayerAdded:Connect(RefreshPlayerList)
+Players.PlayerRemoving:Connect(RefreshPlayerList)
+
+-- Handle respawn
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    Character = newChar
+    HumanoidRootPart = newChar:WaitForChild("HumanoidRootPart")
+    UpdateStatus("Character respawned")
+end)
+
+-- Initial refresh
+RefreshPlayerList()
+
+-- Notification
+game:GetService("StarterGui"):SetCore("SendNotification", {
+    Title = "Teleport Script";
+    Text = "Loaded! Use responsibly!";
+    Duration = 3;
+})
+
+print("✅ Teleport to Player script loaded!")
+print("⚠️ WARNING: Only use in your own game or with permission!")
+print("📌 Using this in public games may result in ban!")
