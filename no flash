@@ -1,0 +1,324 @@
+-- ===================================================================
+--                  NO FLASHLIGHT - KILLER IMMUNITY
+-- Bypass flashlight stun/blind dari survivor
+-- ===================================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+-- ================= KONFIGURASI =================
+local Config = {
+    RemoveVisualEffects = true,  -- Hapus efek visual (white screen, blur)
+    BlockStun = true,            -- Block stun dari flashlight
+    RemoveAudio = true,          -- Hapus sound effect flashlight
+    AutoClean = true,            -- Auto clean setiap frame
+}
+
+-- ================= REMOVE VISUAL EFFECTS =================
+local function removeFlashlightEffects()
+    -- Remove blur effects
+    for _, effect in ipairs(Lighting:GetChildren()) do
+        if effect:IsA("BlurEffect") or effect:IsA("BloomEffect") or effect:IsA("ColorCorrectionEffect") then
+            if effect.Name:lower():find("flash") or effect.Name:lower():find("blind") or effect.Name:lower():find("stun") then
+                effect:Destroy()
+            else
+                -- Reset blur intensity
+                if effect:IsA("BlurEffect") and effect.Size > 5 then
+                    effect.Size = 0
+                end
+                -- Reset bloom
+                if effect:IsA("BloomEffect") and effect.Intensity > 0.5 then
+                    effect.Intensity = 0.4
+                end
+                -- Reset color correction (white flash)
+                if effect:IsA("ColorCorrectionEffect") then
+                    if effect.Brightness > 0.1 or effect.Saturation < -0.1 then
+                        effect.Brightness = 0
+                        effect.Saturation = 0
+                        effect.Contrast = 0
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Remove screen GUI effects
+    if LocalPlayer.PlayerGui then
+        for _, gui in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+            if gui:IsA("Frame") or gui:IsA("ImageLabel") then
+                local name = string.lower(gui.Name)
+                if name:find("flash") or name:find("blind") or name:find("stun") or name:find("white") then
+                    gui.Visible = false
+                    gui:Destroy()
+                end
+                
+                -- Remove white overlay
+                if gui:IsA("Frame") and gui.BackgroundColor3 == Color3.new(1, 1, 1) and gui.BackgroundTransparency < 0.5 then
+                    gui.BackgroundTransparency = 1
+                end
+            end
+        end
+    end
+    
+    -- Remove camera effects
+    local camera = workspace.CurrentCamera
+    if camera then
+        -- Remove camera shake
+        for _, effect in ipairs(camera:GetChildren()) do
+            if effect.Name:lower():find("shake") or effect.Name:lower():find("flash") then
+                effect:Destroy()
+            end
+        end
+    end
+end
+
+-- ================= BLOCK STUN STATE =================
+local function blockStunState()
+    if not LocalPlayer.Character then return end
+    
+    -- Remove stun attributes
+    local stunAttributes = {"Stunned", "Blinded", "Flashed", "Disabled", "Frozen"}
+    for _, attr in ipairs(stunAttributes) do
+        if LocalPlayer:GetAttribute(attr) then
+            LocalPlayer:SetAttribute(attr, false)
+        end
+        if LocalPlayer.Character:GetAttribute(attr) then
+            LocalPlayer.Character:SetAttribute(attr, false)
+        end
+    end
+    
+    -- Remove stun values
+    if LocalPlayer.Character then
+        for _, obj in ipairs(LocalPlayer.Character:GetDescendants()) do
+            if obj:IsA("BoolValue") or obj:IsA("StringValue") then
+                local name = string.lower(obj.Name)
+                if name:find("stun") or name:find("blind") or name:find("flash") then
+                    if obj:IsA("BoolValue") then
+                        obj.Value = false
+                    elseif obj:IsA("StringValue") then
+                        obj.Value = ""
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Enable movement jika terkunci
+    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        if humanoid.WalkSpeed < 5 then
+            -- Mungkin ter-stun, restore speed
+            humanoid.WalkSpeed = 16 -- Default killer speed (adjust jika perlu)
+        end
+        
+        -- Remove stun animation
+        local animator = humanoid:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                local animName = string.lower(track.Name)
+                if animName:find("stun") or animName:find("blind") or animName:find("flash") then
+                    track:Stop()
+                end
+            end
+        end
+    end
+end
+
+-- ================= REMOVE AUDIO EFFECTS =================
+local function removeFlashlightSounds()
+    for _, sound in ipairs(workspace:GetDescendants()) do
+        if sound:IsA("Sound") then
+            local name = string.lower(sound.Name)
+            if name:find("flash") or name:find("blind") or name:find("stun") then
+                sound.Volume = 0
+                sound:Stop()
+                sound:Destroy()
+            end
+        end
+    end
+    
+    if LocalPlayer.Character then
+        for _, sound in ipairs(LocalPlayer.Character:GetDescendants()) do
+            if sound:IsA("Sound") then
+                local name = string.lower(sound.Name)
+                if name:find("flash") or name:find("blind") or name:find("stun") then
+                    sound.Volume = 0
+                    sound:Stop()
+                end
+            end
+        end
+    end
+end
+
+-- ================= HOOK REMOTE EVENTS =================
+local function setupFlashlightBlock()
+    -- Hook FireServer untuk block flashlight remotes
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local args = {...}
+        local method = getnamecallmethod()
+        
+        if (method == "FireServer" or method == "InvokeServer") then
+            local name = string.lower(tostring(self))
+            
+            -- Block flashlight stun remotes
+            if name:find("flash") or name:find("blind") or name:find("stun") then
+                -- Jika ini remote flashlight yang ditujukan ke kita, block
+                if args[1] == LocalPlayer or (LocalPlayer.Character and args[1] == LocalPlayer.Character) then
+                    return -- Block execution
+                end
+            end
+        end
+        
+        return oldNamecall(self, ...)
+    end)
+    
+    -- Monitor remotes di ReplicatedStorage
+    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
+        if remote:IsA("RemoteEvent") then
+            local name = string.lower(remote.Name)
+            if name:find("flash") or name:find("blind") or name:find("stun") then
+                -- Override OnClientEvent
+                remote.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    -- Check jika target adalah kita
+                    if args[1] == LocalPlayer or (LocalPlayer.Character and args[1] == LocalPlayer.Character) then
+                        -- Block dengan tidak melakukan apa-apa
+                        return
+                    end
+                end)
+            end
+        end
+    end
+end
+
+-- ================= MONITOR NEW EFFECTS =================
+local function monitorNewEffects()
+    -- Monitor Lighting effects
+    Lighting.ChildAdded:Connect(function(effect)
+        task.wait(0.05)
+        if effect:IsA("BlurEffect") or effect:IsA("BloomEffect") or effect:IsA("ColorCorrectionEffect") then
+            local name = string.lower(effect.Name)
+            if name:find("flash") or name:find("blind") or name:find("stun") then
+                effect:Destroy()
+            end
+        end
+    end)
+    
+    -- Monitor PlayerGui effects
+    if LocalPlayer.PlayerGui then
+        LocalPlayer.PlayerGui.DescendantAdded:Connect(function(gui)
+            task.wait(0.05)
+            if gui:IsA("Frame") or gui:IsA("ImageLabel") then
+                local name = string.lower(gui.Name)
+                if name:find("flash") or name:find("blind") or name:find("stun") or name:find("white") then
+                    gui.Visible = false
+                    gui:Destroy()
+                end
+            end
+        end)
+    end
+    
+    -- Monitor workspace sounds
+    workspace.DescendantAdded:Connect(function(obj)
+        if obj:IsA("Sound") then
+            task.wait(0.05)
+            local name = string.lower(obj.Name)
+            if name:find("flash") or name:find("blind") or name:find("stun") then
+                obj.Volume = 0
+                obj:Destroy()
+            end
+        end
+    end)
+end
+
+-- ================= AUTO CLEAN LOOP =================
+local function setupAutoClean()
+    -- Clean setiap frame
+    RunService.Heartbeat:Connect(function()
+        if Config.RemoveVisualEffects then
+            removeFlashlightEffects()
+        end
+        
+        if Config.BlockStun then
+            blockStunState()
+        end
+    end)
+    
+    -- Clean audio periodic
+    if Config.RemoveAudio then
+        task.spawn(function()
+            while task.wait(0.5) do
+                pcall(removeFlashlightSounds)
+            end
+        end)
+    end
+end
+
+-- ================= CHARACTER RESPAWN HANDLER =================
+local function setupCharacterHandler()
+    LocalPlayer.CharacterAdded:Connect(function(char)
+        task.wait(0.5)
+        removeFlashlightEffects()
+        blockStunState()
+        removeFlashlightSounds()
+    end)
+end
+
+-- ================= INIT =================
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🔦 INITIALIZING FLASHLIGHT IMMUNITY...")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+-- Execute initial cleanup
+removeFlashlightEffects()
+blockStunState()
+removeFlashlightSounds()
+print("✅ Initial cleanup done")
+
+-- Setup hooks
+pcall(setupFlashlightBlock)
+print("✅ Remote hooks installed")
+
+-- Setup monitors
+monitorNewEffects()
+print("✅ Effect monitors active")
+
+-- Setup auto clean
+setupAutoClean()
+print("✅ Auto-clean loop running")
+
+-- Setup character handler
+setupCharacterHandler()
+print("✅ Character respawn handler ready")
+
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🔦 FLASHLIGHT IMMUNITY ACTIVE!")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🚫 Visual effects: BLOCKED")
+print("🚫 Stun state: BLOCKED")
+print("🚫 Audio effects: MUTED")
+print("🔄 Auto-protection: ON")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+-- Notifikasi
+pcall(function()
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "🔦 Flashlight Immunity Active",
+        Text = "Kamu kebal dari flashlight stun!",
+        Duration = 5,
+    })
+end)
+
+task.wait(0.5)
+
+pcall(function()
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "✅ Auto-Protection ON",
+        Text = "Visual & stun effects di-block",
+        Duration = 4,
+    })
+end)
