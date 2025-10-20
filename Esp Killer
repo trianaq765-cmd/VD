@@ -1,0 +1,425 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
+local LocalPlayer = Players.LocalPlayer
+
+-- ================= CONFIG =================
+local EXACT_KILLER_NAMES = {
+    ["the hidden"]   = "Hidden",
+    ["the abysswalker"] = "Abyss",
+    ["the slasher"]  = "Slasher",
+    ["the masked"]   = "Masked",
+    ["the stalker"]  = "Stalker",
+    ["the killer"]   = "Killer",
+}
+
+local SPECIFIC_KILLER_TOKENS = { "stalker", "hidden", "masked", "slasher", "abysswalker" }
+local ROLE_FIELD_NAMES = { "role", "title", "class" }
+local KILLER_TAGS = { "Killer", "Murderer", "Assassin", "Evil", "Hunter" }
+
+local TEXT_COLOR = {
+    ["hidden"] = Color3.fromRGB(138, 43, 226),   -- Ungu
+    ["abyss"] = Color3.fromRGB(0, 191, 255),     -- Biru terang
+    ["slasher"] = Color3.fromRGB(220, 20, 60),   -- Merah tua
+    ["masked"] = Color3.fromRGB(255, 215, 0),    -- Emas
+    ["stalker"] = Color3.fromRGB(50, 205, 50),   -- Hijau
+    ["killer"] = Color3.fromRGB(255, 60, 60),    -- Merah
+    default = Color3.fromRGB(255, 165, 0),       -- Oranye
+}
+
+local HIGHLIGHT_COLOR = Color3.fromRGB(255, 0, 0)
+
+-- ================= DYNAMIC SIZE CONFIG =================
+local SIZE_CONFIG = {
+    MIN_DISTANCE = 0,      -- Jarak minimum (dekat banget)
+    MAX_DISTANCE = 300,    -- Jarak maksimum
+    
+    -- Ukuran Crown
+    CROWN_SIZE_MIN = 10,   -- Ukuran crown saat jauh
+    CROWN_SIZE_MAX = 18,   -- Ukuran crown saat dekat
+    
+    -- Ukuran Text Nama
+    TEXT_SIZE_MIN = 12,    -- Ukuran text saat jauh
+    TEXT_SIZE_MAX = 24,    -- Ukuran text saat dekat
+    
+    -- Ukuran Distance
+    DIST_SIZE_MIN = 9,     -- Ukuran distance saat jauh
+    DIST_SIZE_MAX = 14,    -- Ukuran distance saat dekat
+    
+    -- Ukuran Billboard
+    BB_WIDTH_MIN = 80,     -- Lebar billboard saat jauh
+    BB_WIDTH_MAX = 150,    -- Lebar billboard saat dekat
+    BB_HEIGHT_MIN = 45,    -- Tinggi billboard saat jauh (dikurangi)
+    BB_HEIGHT_MAX = 60,    -- Tinggi billboard saat dekat (dikurangi)
+}
+
+-- ================= PERSISTENT DATA =================
+local killerCache = {}
+
+-- ================= UTILS =================
+local function toLower(s) return (s and tostring(s):lower()) or "" end
+
+local function containsToken(str, tokens)
+    if not str or str == "" then return false end
+    local s = toLower(str)
+    for _, tk in ipairs(tokens) do
+        if s:find(tk, 1, true) then return true end
+    end
+    return false
+end
+
+local function hasKillerTag(obj)
+    for _, tag in ipairs(KILLER_TAGS) do
+        if CollectionService:HasTag(obj, tag) then return true end
+    end
+    return false
+end
+
+local function getHead(char)
+    return char and (char:FindFirstChild("Head") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("HumanoidRootPart"))
+end
+
+local function getHRP(player)
+    return player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+end
+
+-- Fungsi untuk interpolasi linear (lerp)
+local function lerp(a, b, t)
+    return a + (b - a) * math.clamp(t, 0, 1)
+end
+
+-- Fungsi untuk menghitung scale berdasarkan jarak
+local function calculateScale(distance)
+    local t = (distance - SIZE_CONFIG.MIN_DISTANCE) / (SIZE_CONFIG.MAX_DISTANCE - SIZE_CONFIG.MIN_DISTANCE)
+    t = 1 - math.clamp(t, 0, 1) -- Invert: dekat = 1, jauh = 0
+    return t
+end
+
+local function collectRoleStrings(player)
+    local out = {}
+    table.insert(out, player.Name)
+    pcall(function()
+        if player.DisplayName and player.DisplayName ~= "" then
+            table.insert(out, player.DisplayName)
+        end
+    end)
+    for _, field in ipairs(ROLE_FIELD_NAMES) do
+        local ok, val = pcall(function() return player:GetAttribute(field) end)
+        if ok and val ~= nil then table.insert(out, tostring(val)) end
+    end
+    for _, ch in ipairs(player:GetChildren()) do
+        local lname = toLower(ch.Name)
+        if ch:IsA("StringValue") or ch:IsA("IntValue") or ch:IsA("NumberValue") then
+            for _, field in ipairs(ROLE_FIELD_NAMES) do
+                if lname:find(toLower(field), 1, true) then
+                    local v = (ch.Value ~= nil) and tostring(ch.Value) or ""
+                    if v ~= "" then table.insert(out, v) end
+                end
+            end
+        end
+    end
+    if player.Character then
+        local hum = player.Character:FindFirstChildOfClass("Humanoid")
+        if hum and hum.DisplayName and hum.DisplayName ~= "" then
+            table.insert(out, hum.DisplayName)
+        end
+        for _, ch in ipairs(player.Character:GetChildren()) do
+            local lname = toLower(ch.Name)
+            if ch:IsA("StringValue") or ch:IsA("IntValue") or ch:IsA("NumberValue") then
+                for _, field in ipairs(ROLE_FIELD_NAMES) do
+                    if lname:find(toLower(field), 1, true) then
+                        local v = (ch.Value ~= nil) and tostring(ch.Value) or ""
+                        if v ~= "" then table.insert(out, v) end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function detectKiller(player)
+    if killerCache[player.UserId] then
+        return true, killerCache[player.UserId]
+    end
+    
+    local nameLower = toLower(player.Name)
+    if EXACT_KILLER_NAMES[nameLower] then
+        killerCache[player.UserId] = EXACT_KILLER_NAMES[nameLower]
+        return true, EXACT_KILLER_NAMES[nameLower]
+    end
+    
+    local cands = collectRoleStrings(player)
+    for _, s in ipairs(cands) do
+        local ls = toLower(s)
+        if EXACT_KILLER_NAMES[ls] then
+            killerCache[player.UserId] = EXACT_KILLER_NAMES[ls]
+            return true, EXACT_KILLER_NAMES[ls]
+        end
+        if containsToken(ls, SPECIFIC_KILLER_TOKENS) then
+            for _, tk in ipairs(SPECIFIC_KILLER_TOKENS) do
+                if ls:find(tk, 1, true) then
+                    local roleName = tk:gsub("^%l", string.upper)
+                    killerCache[player.UserId] = roleName
+                    return true, roleName
+                end
+            end
+        end
+    end
+    
+    if hasKillerTag(player) or (player.Character and hasKillerTag(player.Character)) then
+        killerCache[player.UserId] = "Killer"
+        return true, "Killer"
+    end
+    
+    return false, nil
+end
+
+-- ================= ESP IMPLEMENTASI =================
+local bbMap = {}
+local highlightMap = {}
+
+local function cleanupESP(player)
+    if bbMap[player] then
+        pcall(function() bbMap[player]:Destroy() end)
+        bbMap[player] = nil
+    end
+    if highlightMap[player] then
+        pcall(function() highlightMap[player]:Destroy() end)
+        highlightMap[player] = nil
+    end
+end
+
+local function createOrGetHighlight(char)
+    if not char then return nil end
+    
+    local highlight = char:FindFirstChild("Killer_Highlight")
+    if highlight and highlight:IsA("Highlight") then
+        return highlight
+    end
+    
+    if highlight then
+        highlight:Destroy()
+    end
+    
+    highlight = Instance.new("Highlight")
+    highlight.Name = "Killer_Highlight"
+    highlight.Adornee = char
+    highlight.FillColor = HIGHLIGHT_COLOR
+    highlight.OutlineColor = Color3.new(1, 1, 1)
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.Parent = char
+    
+    return highlight
+end
+
+local function createOrGetBillboard(player, head, roleShort)
+    if not head then return nil end
+    
+    local bb = bbMap[player]
+    
+    if bb and bb.Parent and bb.Parent == head then
+        return bb
+    end
+    
+    if bb then
+        pcall(function() bb:Destroy() end)
+    end
+    
+    bb = Instance.new("BillboardGui")
+    bb.Name = "KILLER_ROLE_TAG"
+    bb.Size = UDim2.new(0, SIZE_CONFIG.BB_WIDTH_MAX, 0, SIZE_CONFIG.BB_HEIGHT_MAX)
+    bb.StudsOffset = Vector3.new(0, 2.5, 0)  -- Dikurangi dari 3 ke 2.5
+    bb.AlwaysOnTop = true
+    bb.MaxDistance = 500
+    bb.Parent = head
+
+    local container = Instance.new("Frame", bb)
+    container.Name = "Container"
+    container.BackgroundTransparency = 1
+    container.BorderSizePixel = 0
+    container.Size = UDim2.new(1, 0, 1, 0)
+    
+    -- Logo Mahkota - LEBIH RAPAT
+    local crown = Instance.new("TextLabel", container)
+    crown.Name = "Crown"
+    crown.BackgroundTransparency = 1
+    crown.Size = UDim2.new(1, 0, 0.25, 0)  -- Dikurangi dari 0.3 ke 0.25
+    crown.Position = UDim2.new(0, 0, 0.05, 0)  -- Ditambah sedikit padding atas
+    crown.Font = Enum.Font.Gotham
+    crown.TextSize = SIZE_CONFIG.CROWN_SIZE_MAX
+    crown.TextColor3 = Color3.fromRGB(255, 215, 0)
+    crown.TextXAlignment = Enum.TextXAlignment.Center
+    crown.TextYAlignment = Enum.TextYAlignment.Center
+    crown.Text = "👹"
+    
+    -- Text Nama Killer - POSISI LEBIH RAPAT KE ATAS
+    local text = Instance.new("TextLabel", container)
+    text.Name = "Text"
+    text.BackgroundTransparency = 1
+    text.Size = UDim2.new(1, 0, 0.4, 0)  -- Size tetap
+    text.Position = UDim2.new(0, 0, 0.28, 0)  -- Dikurangi dari 0.3 ke 0.28 (lebih rapat ke mahkota)
+    text.Font = Enum.Font.GothamSemibold
+    text.TextSize = SIZE_CONFIG.TEXT_SIZE_MAX
+    text.TextColor3 = TEXT_COLOR[toLower(roleShort)] or TEXT_COLOR.default
+    text.TextXAlignment = Enum.TextXAlignment.Center
+    text.TextYAlignment = Enum.TextYAlignment.Center
+    text.Text = roleShort
+
+    -- Distance Label - POSISI LEBIH RAPAT
+    local distLabel = Instance.new("TextLabel", container)
+    distLabel.Name = "Distance"
+    distLabel.BackgroundTransparency = 1
+    distLabel.Size = UDim2.new(1, 0, 0.25, 0)  -- Dikurangi dari 0.3 ke 0.25
+    distLabel.Position = UDim2.new(0, 0, 0.7, 0)  -- Tetap di bawah
+    distLabel.Font = Enum.Font.Gotham
+    distLabel.TextSize = SIZE_CONFIG.DIST_SIZE_MAX
+    distLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    distLabel.TextTransparency = 0.3
+    distLabel.TextXAlignment = Enum.TextXAlignment.Center
+    distLabel.TextYAlignment = Enum.TextYAlignment.Center
+    distLabel.Text = "0m"
+
+    bbMap[player] = bb
+    return bb
+end
+
+-- Fungsi untuk update jarak DAN ukuran secara dinamis
+local function updateDistanceAndSize(player, bb)
+    if not bb or not bb.Parent then return end
+    
+    local myHRP = getHRP(LocalPlayer)
+    local targetHRP = getHRP(player)
+    
+    if not myHRP or not targetHRP then return end
+    
+    local distance = (myHRP.Position - targetHRP.Position).Magnitude
+    local scale = calculateScale(distance)
+    
+    -- Update ukuran Crown
+    local crown = bb.Container and bb.Container:FindFirstChild("Crown")
+    if crown then
+        crown.TextSize = lerp(SIZE_CONFIG.CROWN_SIZE_MIN, SIZE_CONFIG.CROWN_SIZE_MAX, scale)
+    end
+    
+    -- Update ukuran Text Nama
+    local text = bb.Container and bb.Container:FindFirstChild("Text")
+    if text then
+        text.TextSize = lerp(SIZE_CONFIG.TEXT_SIZE_MIN, SIZE_CONFIG.TEXT_SIZE_MAX, scale)
+    end
+    
+    -- Update ukuran Distance dan nilai jarak
+    local distLabel = bb.Container and bb.Container:FindFirstChild("Distance")
+    if distLabel then
+        distLabel.TextSize = lerp(SIZE_CONFIG.DIST_SIZE_MIN, SIZE_CONFIG.DIST_SIZE_MAX, scale)
+        distLabel.Text = string.format("%.0fm", distance)
+    end
+    
+    -- Update ukuran Billboard
+    local width = lerp(SIZE_CONFIG.BB_WIDTH_MIN, SIZE_CONFIG.BB_WIDTH_MAX, scale)
+    local height = lerp(SIZE_CONFIG.BB_HEIGHT_MIN, SIZE_CONFIG.BB_HEIGHT_MAX, scale)
+    bb.Size = UDim2.new(0, width, 0, height)
+end
+
+local function applyESP(player)
+    local isK, roleShort = detectKiller(player)
+    if not isK then
+        cleanupESP(player)
+        return
+    end
+
+    local char = player.Character
+    if not char then return end
+
+    local highlight = createOrGetHighlight(char)
+    if highlight then
+        highlightMap[player] = highlight
+    end
+
+    local head = getHead(char)
+    if not head then return end
+    
+    local bb = createOrGetBillboard(player, head, roleShort)
+    if not bb then return end
+
+    updateDistanceAndSize(player, bb)
+end
+
+local function setupPlayer(player)
+    if player == LocalPlayer then return end
+    
+    player.CharacterAdded:Connect(function(char)
+        task.wait(0.1)
+        applyESP(player)
+        
+        local function monitorParts()
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part:GetPropertyChangedSignal("Transparency"):Connect(function()
+                        task.wait(0.05)
+                        applyESP(player)
+                    end)
+                end
+            end
+        end
+        
+        pcall(monitorParts)
+        
+        char.DescendantAdded:Connect(function(desc)
+            if desc:IsA("BasePart") then
+                desc:GetPropertyChangedSignal("Transparency"):Connect(function()
+                    task.wait(0.05)
+                    applyESP(player)
+                end)
+            end
+        end)
+    end)
+    
+    player.AncestryChanged:Connect(function()
+        if not player:IsDescendantOf(game) then
+            cleanupESP(player)
+            killerCache[player.UserId] = nil
+        end
+    end)
+    
+    if player.Character then
+        task.spawn(applyESP, player)
+    end
+end
+
+for _, player in pairs(Players:GetPlayers()) do
+    setupPlayer(player)
+end
+
+Players.PlayerAdded:Connect(setupPlayer)
+
+-- UPDATE DINAMIS setiap frame (jarak + ukuran)
+RunService.Heartbeat:Connect(function()
+    for player, bb in pairs(bbMap) do
+        if player and player.Parent and player.Character then
+            if bb and bb.Parent and bb.Parent.Parent then
+                -- Update jarak dan ukuran secara real-time
+                updateDistanceAndSize(player, bb)
+            else
+                applyESP(player)
+            end
+        else
+            bbMap[player] = nil
+        end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(2) do
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and killerCache[player.UserId] then
+                if player.Character and not bbMap[player] then
+                    applyESP(player)
+                end
+            end
+        end
+    end
+end)
+
+print("✅ Killer ESP Dynamic Size - Compact Layout!")
