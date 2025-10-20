@@ -1,0 +1,214 @@
+-- ===================================================================
+--                  FIX 3D CAMERA - UNLOCK & RESTORE
+-- Mengembalikan kamera ke mode 3D normal
+-- ===================================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- ================= FUNGSI FIX KAMERA =================
+local function fixCamera()
+    local success = pcall(function()
+        -- 1. Set Camera Type ke Custom (3D Free Camera)
+        Camera.CameraType = Enum.CameraType.Custom
+        
+        -- 2. Unlock Camera Subject
+        if LocalPlayer.Character then
+            local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                Camera.CameraSubject = humanoid
+            end
+        end
+        
+        -- 3. Reset Camera Mode di Player Settings
+        LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        LocalPlayer.CameraMaxZoomDistance = 128 -- Default zoom out distance
+        LocalPlayer.CameraMinZoomDistance = 0.5 -- Default zoom in distance
+        
+        -- 4. Remove Camera Scripts yang mengunci kamera
+        for _, script in ipairs(Camera:GetChildren()) do
+            if script:IsA("Script") or script:IsA("LocalScript") then
+                script.Disabled = true
+                script:Destroy()
+            end
+        end
+        
+        -- 5. Reset FOV (Field of View)
+        Camera.FieldOfView = 70 -- Default FOV
+        
+        -- 6. Enable DevComputer/DevConsole Camera Movement
+        pcall(function()
+            LocalPlayer.DevComputerCameraMode = Enum.DevComputerCameraMovementMode.UserChoice
+            LocalPlayer.DevTouchCameraMode = Enum.DevTouchCameraMovementMode.UserChoice
+        end)
+        
+        -- 7. Remove Camera Lock Scripts dari StarterPlayer
+        pcall(function()
+            for _, module in ipairs(game:GetService("StarterPlayer"):GetDescendants()) do
+                if module.Name:lower():find("camera") and (module:IsA("ModuleScript") or module:IsA("LocalScript")) then
+                    module.Disabled = true
+                end
+            end
+        end)
+    end)
+    
+    return success
+end
+
+-- ================= FORCE UNLOCK KAMERA =================
+local function forceUnlockCamera()
+    -- Hook camera properties untuk mencegah lock ulang
+    local oldIndex
+    oldIndex = hookmetamethod(game, "__newindex", function(self, property, value)
+        if self == Camera then
+            -- Prevent camera type lock
+            if property == "CameraType" and value ~= Enum.CameraType.Custom then
+                return oldIndex(self, property, Enum.CameraType.Custom)
+            end
+            
+            -- Prevent FOV lock
+            if property == "FieldOfView" and (value < 50 or value > 120) then
+                return oldIndex(self, property, 70)
+            end
+        end
+        
+        if self == LocalPlayer then
+            -- Prevent camera mode lock
+            if property == "CameraMode" and value == Enum.CameraMode.LockFirstPerson then
+                return oldIndex(self, property, Enum.CameraMode.Classic)
+            end
+            
+            -- Prevent zoom lock
+            if property == "CameraMaxZoomDistance" and value < 50 then
+                return oldIndex(self, property, 128)
+            end
+        end
+        
+        return oldIndex(self, property, value)
+    end)
+end
+
+-- ================= AUTO FIX CONTINUOUS =================
+local function setupContinuousFix()
+    -- Fix setiap kali karakter spawn
+    LocalPlayer.CharacterAdded:Connect(function(char)
+        task.wait(0.5)
+        fixCamera()
+        
+        local humanoid = char:WaitForChild("Humanoid", 5)
+        if humanoid then
+            Camera.CameraSubject = humanoid
+        end
+    end)
+    
+    -- Fix setiap frame (untuk game yang force lock camera)
+    RunService.RenderStepped:Connect(function()
+        if Camera.CameraType ~= Enum.CameraType.Custom then
+            Camera.CameraType = Enum.CameraType.Custom
+        end
+        
+        if LocalPlayer.CameraMode == Enum.CameraMode.LockFirstPerson then
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        end
+    end)
+    
+    -- Monitor perubahan camera type
+    Camera:GetPropertyChangedSignal("CameraType"):Connect(function()
+        if Camera.CameraType ~= Enum.CameraType.Custom then
+            task.wait(0.1)
+            Camera.CameraType = Enum.CameraType.Custom
+        end
+    end)
+end
+
+-- ================= RESTORE DEFAULT CONTROLS =================
+local function restoreControls()
+    pcall(function()
+        -- Enable mouse lock
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+        
+        -- Enable right click camera rotation
+        pcall(function()
+            LocalPlayer.StarterPlayer.EnableMouseLockOption = true
+        end)
+        
+        -- Reset camera offset
+        if LocalPlayer.Character then
+            local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.CameraOffset = Vector3.new(0, 0, 0)
+            end
+        end
+    end)
+end
+
+-- ================= REMOVE CAMERA SHAKE =================
+local function removeCameraShake()
+    -- Remove semua camera shake effects
+    for _, effect in ipairs(Camera:GetChildren()) do
+        if effect:IsA("ScreenShake") or effect.Name:lower():find("shake") then
+            effect:Destroy()
+        end
+    end
+end
+
+-- ================= INIT =================
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🎥 FIXING 3D CAMERA...")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+-- Execute fix
+local success = fixCamera()
+
+if success then
+    print("✅ Camera unlocked")
+else
+    print("⚠️  Basic fix failed, trying force unlock...")
+end
+
+-- Force unlock dengan hook
+pcall(forceUnlockCamera)
+print("✅ Camera hook installed")
+
+-- Setup continuous fix
+setupContinuousFix()
+print("✅ Continuous fix active")
+
+-- Restore controls
+restoreControls()
+print("✅ Controls restored")
+
+-- Remove camera shake
+removeCameraShake()
+print("✅ Camera shake removed")
+
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🎥 3D CAMERA FIX COMPLETE!")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("📸 Camera Type: Custom (3D Free)")
+print("🔓 Zoom: Unlocked (0.5 - 128)")
+print("👁️  FOV: 70° (Normal)")
+print("🔄 Auto-fix: Active")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+-- Notifikasi
+pcall(function()
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "🎥 3D Camera Fixed",
+        Text = "Camera unlocked & restored to 3D mode!",
+        Duration = 5,
+    })
+end)
+
+task.wait(0.5)
+
+pcall(function()
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "✅ Auto-Fix Active",
+        Text = "Camera will stay unlocked",
+        Duration = 4,
+    })
+end)
