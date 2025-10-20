@@ -1,0 +1,102 @@
+local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/jensonhirst/Orion/main/source')))()
+local Window = OrionLib:MakeWindow({Name = "Title of the library", HidePremium = false, SaveConfig = true, ConfigFolder = "OrionTest"})
+
+local Tab = Window:MakeTab({
+	Name = "Survivor",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+local Section = Tab:AddSection({
+	Name = "Fitur"
+})
+
+OrionLib:MakeNotification({
+	Name = "tuwing",
+	Content = "hai memek??",
+	Image = "rbxassetid://4483345998",
+	Time = 3
+})
+
+Tab:AddButton({
+	Name = "auto generator",
+	Callback = function()
+      		print("button pressed")
+      loadstring(game:HttpGet("https://pastebin.com/raw/y03DDu1K"))()
+  	end    
+})
+
+Tab:AddButton({
+	Name = "auto heal",
+	Callback = function()
+      		print("button pressed")
+      loadstring(game:HttpGet("https://pastebin.com/muxMxpQd"))()
+  	end    
+})
+
+Tab:AddButton({
+	Name = "speed",
+	Callback = function()
+      		print("button pressed")
+      loadstring(game:HttpGet("https://pastebin.com/raw/tDx7pM8q"))()
+  	end    
+})
+
+Tab:AddButton({
+	Name = "hop server",
+	Callback = function()
+      		print("button pressed")
+      loadstring(game:HttpGet("https://pastebin.com/raw/BpUXKL1V"))()
+  	end    
+})
+
+Tab:AddButton({
+	Name = "teleport to player",
+	Callback = function()
+      		print("button pressed")
+      loadstring(game:HttpGet("https://pastebin.com/raw/4TeHfrgu"))()
+  	end    
+})
+
+
+local Tab = Window:MakeTab({
+	Name = "VISUAL",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+local Section = Tab:AddSection({
+	Name = "FITUR"
+})
+
+OrionLib:MakeNotification({
+	Name = "tuwing",
+	Content = "hai memek??",
+	Image = "rbxassetid://4483345998",
+	Time = 3
+})
+
+Tab:AddButton({
+	Name = "Esp Generator",
+	Callback = function()
+      		print("button pressed")
+      loadstring(game:HttpGet("https://pastebin.com/raw/sdhVV4FP"))()
+  	end    
+})
+
+Tab:AddButton({
+	Name = "Esp Killer",
+	Callback = function()
+      		print("button pressed")
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/Esp%20Killer"))()
+  	end    
+})
+
+Tab:AddButton({
+	Name = "NO FOG",
+	Callback = function()
+      		print("button pressed")
+      loadstring(game:HttpGet("https://pastebin.com/raw/t3AUuzV6"))()
+  	end    
+})
+
