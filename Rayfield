@@ -1,0 +1,114 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+   Name = "ToingHub",
+   LoadingTitle = "Sabar Nyet..",
+   LoadingSubtitle = "by tuwing",
+   ConfigurationSaving = {
+      Enabled = true,
+      FolderName = nil,
+      FileName = "BySiriusHub"
+   },
+   Discord = {
+      Enabled = false,
+      Invite = "noinvitelink",
+      RememberJoins = true
+   },
+   KeySystem = false,
+   KeySettings = {
+      Title = "Bu Sirius Key",
+      Subtitle = "Key System",
+      Note = "No key needed",
+      FileName = "Key",
+      SaveKey = false,
+      GrabKeyFromSite = false,
+      Key = {"Hello"}
+   }
+})
+
+Rayfield:Notify({
+   Title = "tuwing",
+   Content = "hai memek??",
+   Duration = 3,
+   Image = 4483345998,
+   Actions = {
+      Ignore = {
+         Name = "Okay!",
+         Callback = function()
+            print("User acknowledged notification")
+         end
+      },
+   },
+})
+
+-- Tab Survivor
+local SurvivorTab = Window:CreateTab("Survivor", 4483345998)
+local SurvivorSection = SurvivorTab:CreateSection("Fitur")
+
+local AutoGenButton = SurvivorTab:CreateButton({
+   Name = "Auto Generator",
+   Callback = function()
+      print("Auto Generator activated")
+      loadstring(game:HttpGet("https://pastebin.com/raw/y03DDu1K"))()
+   end,
+})
+
+local AutoHealButton = SurvivorTab:CreateButton({
+   Name = "Auto Heal",
+   Callback = function()
+      print("Auto Heal activated")
+      loadstring(game:HttpGet("https://pastebin.com/muxMxpQd"))()
+   end,
+})
+
+local SpeedButton = SurvivorTab:CreateButton({
+   Name = "Speed",
+   Callback = function()
+      print("Speed activated")
+      loadstring(game:HttpGet("https://pastebin.com/raw/tDx7pM8q"))()
+   end,
+})
+
+local HopServerButton = SurvivorTab:CreateButton({
+   Name = "Hop Server",
+   Callback = function()
+      print("Server Hop activated")
+      loadstring(game:HttpGet("https://pastebin.com/raw/BpUXKL1V"))()
+   end,
+})
+
+local TeleportButton = SurvivorTab:CreateButton({
+   Name = "Teleport to Player",
+   Callback = function()
+      print("Teleport to Player activated")
+      loadstring(game:HttpGet("https://pastebin.com/raw/4TeHfrgu"))()
+   end,
+})
+
+-- Tab Visual
+local VisualTab = Window:CreateTab("VISUAL", 4483345998)
+local VisualSection = VisualTab:CreateSection("FITUR")
+
+local EspGenButton = VisualTab:CreateButton({
+   Name = "ESP Generator",
+   Callback = function()
+      print("ESP Generator activated")
+      loadstring(game:HttpGet("https://pastebin.com/raw/sdhVV4FP"))()
+   end,
+})
+
+local EspKillerButton = VisualTab:CreateButton({
+   Name = "ESP Killer",
+   Callback = function()
+      print("ESP Killer activated")
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/Esp%20Killer"))()
+   end,
+})
+
+local NoFogButton = VisualTab:CreateButton({
+   Name = "NO FOG",
+   Callback = function()
+      print("No Fog activated")
+      loadstring(game:HttpGet("https://pastebin.com/raw/t3AUuzV6"))()
+   end,
+})
