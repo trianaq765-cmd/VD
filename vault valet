@@ -1,0 +1,384 @@
+-- ===================================================================
+--                  COOLDOWN REDUCER - KILLER
+-- Mengurangi cooldown attack/ability killer (bukan remove 100%)
+-- ===================================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+-- ================= KONFIGURASI =================
+local Config = {
+    -- Multiplier cooldown (0.5 = 50% cooldown / 2x lebih cepat)
+    -- Semakin kecil = semakin cepat, tapi jangan terlalu kecil biar gak ketahuan
+    AttackCooldownMultiplier = 0.5,    -- Attack 2x lebih cepat
+    AbilityCooldownMultiplier = 0.6,   -- Ability 1.7x lebih cepat
+    PowerCooldownMultiplier = 0.7,     -- Power 1.4x lebih cepat
+    
+    -- Auto-detect dan reduce
+    AutoReduce = true,
+    SafeMode = true,  -- Jangan set cooldown terlalu rendah untuk avoid detection
+}
+
+-- ================= DATA =================
+local cooldownCache = {}
+local originalCooldowns = {}
+
+-- ================= FUNGSI BANTU =================
+local function isCooldownAttribute(name)
+    local lowerName = string.lower(name)
+    local cooldownKeywords = {
+        "cooldown", "cool", "cd", "delay", "wait", 
+        "debounce", "recharge", "recovery", "reload"
+    }
+    
+    for _, keyword in ipairs(cooldownKeywords) do
+        if lowerName:find(keyword) then
+            return true
+        end
+    end
+    
+    return false
+end
+
+local function getCooldownType(name)
+    local lowerName = string.lower(name)
+    
+    if lowerName:find("attack") or lowerName:find("hit") or lowerName:find("swing") then
+        return "attack", Config.AttackCooldownMultiplier
+    elseif lowerName:find("ability") or lowerName:find("skill") or lowerName:find("special") then
+        return "ability", Config.AbilityCooldownMultiplier
+    elseif lowerName:find("power") or lowerName:find("ultimate") or lowerName:find("ult") then
+        return "power", Config.PowerCooldownMultiplier
+    else
+        -- Default ke attack cooldown
+        return "generic", Config.AttackCooldownMultiplier
+    end
+end
+
+-- ================= REDUCE COOLDOWN ATTRIBUTES =================
+local function reduceCooldownAttributes()
+    if not LocalPlayer.Character then return end
+    
+    -- Scan attributes di player
+    for _, attrName in ipairs(LocalPlayer:GetAttributes()) do
+        if isCooldownAttribute(attrName) then
+            local value = LocalPlayer:GetAttribute(attrName)
+            if tonumber(value) and value > 0 then
+                -- Simpan original value
+                if not originalCooldowns[attrName] then
+                    originalCooldowns[attrName] = value
+                end
+                
+                local cdType, multiplier = getCooldownType(attrName)
+                local reducedValue = originalCooldowns[attrName] * multiplier
+                
+                -- Safe mode: jangan terlalu kecil
+                if Config.SafeMode and reducedValue < 0.3 then
+                    reducedValue = 0.3
+                end
+                
+                LocalPlayer:SetAttribute(attrName, reducedValue)
+            end
+        end
+    end
+    
+    -- Scan attributes di character
+    for _, attrName in ipairs(LocalPlayer.Character:GetAttributes()) do
+        if isCooldownAttribute(attrName) then
+            local value = LocalPlayer.Character:GetAttribute(attrName)
+            if tonumber(value) and value > 0 then
+                if not originalCooldowns[attrName] then
+                    originalCooldowns[attrName] = value
+                end
+                
+                local cdType, multiplier = getCooldownType(attrName)
+                local reducedValue = originalCooldowns[attrName] * multiplier
+                
+                if Config.SafeMode and reducedValue < 0.3 then
+                    reducedValue = 0.3
+                end
+                
+                LocalPlayer.Character:SetAttribute(attrName, reducedValue)
+            end
+        end
+    end
+end
+
+-- ================= REDUCE COOLDOWN VALUES =================
+local function reduceCooldownValues()
+    if not LocalPlayer.Character then return end
+    
+    -- Scan NumberValue/IntValue cooldowns
+    for _, obj in ipairs(LocalPlayer.Character:GetDescendants()) do
+        if obj:IsA("NumberValue") or obj:IsA("IntValue") then
+            local name = obj.Name
+            if isCooldownAttribute(name) then
+                if obj.Value > 0 then
+                    if not originalCooldowns[obj] then
+                        originalCooldowns[obj] = obj.Value
+                    end
+                    
+                    local cdType, multiplier = getCooldownType(name)
+                    local reducedValue = originalCooldowns[obj] * multiplier
+                    
+                    if Config.SafeMode and reducedValue < 0.3 then
+                        reducedValue = 0.3
+                    end
+                    
+                    obj.Value = reducedValue
+                end
+            end
+        end
+    end
+    
+    -- Scan di PlayerGui (untuk UI cooldown timers)
+    if LocalPlayer.PlayerGui then
+        for _, obj in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+            if obj:IsA("NumberValue") or obj:IsA("IntValue") then
+                local name = obj.Name
+                if isCooldownAttribute(name) then
+                    if obj.Value > 0 then
+                        if not originalCooldowns[obj] then
+                            originalCooldowns[obj] = obj.Value
+                        end
+                        
+                        local cdType, multiplier = getCooldownType(name)
+                        local reducedValue = originalCooldowns[obj] * multiplier
+                        
+                        if Config.SafeMode and reducedValue < 0.3 then
+                            reducedValue = 0.3
+                        end
+                        
+                        obj.Value = reducedValue
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- ================= HOOK COOLDOWN SETTERS =================
+local function hookCooldownSetters()
+    -- Hook setAttribute
+    local oldSetAttribute = LocalPlayer.SetAttribute
+    LocalPlayer.SetAttribute = function(self, attrName, value)
+        if isCooldownAttribute(attrName) and tonumber(value) then
+            if not originalCooldowns[attrName] then
+                originalCooldowns[attrName] = value
+            end
+            
+            local cdType, multiplier = getCooldownType(attrName)
+            local reducedValue = value * multiplier
+            
+            if Config.SafeMode and reducedValue < 0.3 then
+                reducedValue = 0.3
+            end
+            
+            return oldSetAttribute(self, attrName, reducedValue)
+        end
+        
+        return oldSetAttribute(self, attrName, value)
+    end
+    
+    -- Hook __newindex untuk intercept cooldown changes
+    local oldNewIndex
+    oldNewIndex = hookmetamethod(game, "__newindex", function(self, property, value)
+        -- Intercept NumberValue/IntValue changes
+        if (self:IsA("NumberValue") or self:IsA("IntValue")) and property == "Value" then
+            if isCooldownAttribute(self.Name) and tonumber(value) and value > 0 then
+                if not originalCooldowns[self] then
+                    originalCooldowns[self] = value
+                end
+                
+                local cdType, multiplier = getCooldownType(self.Name)
+                local reducedValue = value * multiplier
+                
+                if Config.SafeMode and reducedValue < 0.3 then
+                    reducedValue = 0.3
+                end
+                
+                return oldNewIndex(self, property, reducedValue)
+            end
+        end
+        
+        return oldNewIndex(self, property, value)
+    end)
+end
+
+-- ================= HOOK REMOTE EVENTS =================
+local function hookRemoteCooldowns()
+    -- Hook remote events yang set cooldown
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local args = {...}
+        local method = getnamecallmethod()
+        
+        if method == "FireServer" or method == "InvokeServer" then
+            local name = string.lower(tostring(self))
+            
+            -- Jika remote ini untuk set cooldown
+            if isCooldownAttribute(name) then
+                -- Modify cooldown argument
+                for i, arg in ipairs(args) do
+                    if tonumber(arg) and arg > 0 then
+                        local cdType, multiplier = getCooldownType(name)
+                        local reducedValue = arg * multiplier
+                        
+                        if Config.SafeMode and reducedValue < 0.3 then
+                            reducedValue = 0.3
+                        end
+                        
+                        args[i] = reducedValue
+                    end
+                end
+                
+                return oldNamecall(self, unpack(args))
+            end
+        end
+        
+        return oldNamecall(self, ...)
+    end)
+end
+
+-- ================= MONITOR NEW COOLDOWNS =================
+local function monitorNewCooldowns()
+    -- Monitor attributes changes
+    if LocalPlayer.Character then
+        LocalPlayer.Character.AttributeChanged:Connect(function(attrName)
+            if isCooldownAttribute(attrName) and Config.AutoReduce then
+                task.wait(0.05)
+                reduceCooldownAttributes()
+            end
+        end)
+    end
+    
+    -- Monitor new values
+    if LocalPlayer.Character then
+        LocalPlayer.Character.DescendantAdded:Connect(function(obj)
+            if obj:IsA("NumberValue") or obj:IsA("IntValue") then
+                if isCooldownAttribute(obj.Name) then
+                    task.wait(0.05)
+                    reduceCooldownValues()
+                    
+                    -- Monitor value changes
+                    obj.Changed:Connect(function()
+                        if Config.AutoReduce then
+                            task.wait(0.05)
+                            reduceCooldownValues()
+                        end
+                    end)
+                end
+            end
+        end)
+    end
+end
+
+-- ================= AUTO REDUCE LOOP =================
+local function setupAutoReduce()
+    -- Reduce setiap frame untuk cooldowns yang aktif
+    RunService.Heartbeat:Connect(function()
+        if Config.AutoReduce then
+            -- Scan dan reduce cooldowns yang sedang berjalan
+            if LocalPlayer.Character then
+                for _, obj in ipairs(LocalPlayer.Character:GetDescendants()) do
+                    if obj:IsA("NumberValue") or obj:IsA("IntValue") then
+                        if isCooldownAttribute(obj.Name) and obj.Value > 0 then
+                            local cdType, multiplier = getCooldownType(obj.Name)
+                            
+                            -- Percepat countdown
+                            if obj.Value > 0.1 then
+                                obj.Value = obj.Value - (RunService.Heartbeat:Wait() * (1 - multiplier))
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    -- Periodic full reduce
+    task.spawn(function()
+        while task.wait(0.5) do
+            if Config.AutoReduce then
+                pcall(reduceCooldownAttributes)
+                pcall(reduceCooldownValues)
+            end
+        end
+    end)
+end
+
+-- ================= CHARACTER HANDLER =================
+local function setupCharacterHandler()
+    LocalPlayer.CharacterAdded:Connect(function(char)
+        task.wait(0.5)
+        
+        -- Reset cache
+        originalCooldowns = {}
+        
+        -- Apply reductions
+        reduceCooldownAttributes()
+        reduceCooldownValues()
+        
+        -- Setup monitors
+        monitorNewCooldowns()
+        
+        print("✅ Cooldown reducer applied to new character")
+    end)
+end
+
+-- ================= INIT =================
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("⚡ INITIALIZING COOLDOWN REDUCER...")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+-- Initial reduce
+reduceCooldownAttributes()
+reduceCooldownValues()
+print("✅ Initial cooldown reduction applied")
+
+-- Setup hooks
+pcall(hookCooldownSetters)
+pcall(hookRemoteCooldowns)
+print("✅ Cooldown hooks installed")
+
+-- Setup monitors
+monitorNewCooldowns()
+print("✅ Cooldown monitors active")
+
+-- Setup auto reduce
+setupAutoReduce()
+print("✅ Auto-reduce loop running")
+
+-- Setup character handler
+setupCharacterHandler()
+print("✅ Character handler ready")
+
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("⚡ COOLDOWN REDUCER ACTIVE!")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print(string.format("🗡️  Attack CD: %.0f%% (%.1fx faster)", Config.AttackCooldownMultiplier * 100, 1 / Config.AttackCooldownMultiplier))
+print(string.format("✨ Ability CD: %.0f%% (%.1fx faster)", Config.AbilityCooldownMultiplier * 100, 1 / Config.AbilityCooldownMultiplier))
+print(string.format("⚡ Power CD: %.0f%% (%.1fx faster)", Config.PowerCooldownMultiplier * 100, 1 / Config.PowerCooldownMultiplier))
+print("🛡️  Safe mode: " .. (Config.SafeMode and "ON" or "OFF"))
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+-- Notifikasi
+pcall(function()
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "⚡ Cooldown Reducer Active",
+        Text = string.format("Attack: %.1fx faster!", 1 / Config.AttackCooldownMultiplier),
+        Duration = 5,
+    })
+end)
+
+task.wait(0.5)
+
+pcall(function()
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "✅ Safe Mode ON",
+        Text = "Cooldowns reduced safely",
+        Duration = 4,
+    })
+  end)
