@@ -1,0 +1,358 @@
+-- ===================================================================
+--                  ESP HOOK/GANTUNGAN - DBD STYLE
+-- Auto detect dan highlight semua hook di map
+-- ===================================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+
+-- ================= KONFIGURASI =================
+local Config = {
+    MaxDistance = 500,       -- Jarak maksimal ESP terlihat
+    UpdateInterval = 0.5,    -- Interval update jarak (detik)
+    ShowDistance = true,     -- Tampilkan jarak
+    HighlightColor = Color3.fromRGB(255, 100, 100), -- Warna highlight (merah)
+    TextColor = Color3.fromRGB(255, 255, 255),      -- Warna text
+}
+
+-- ================= DATA =================
+local hookCache = {}
+local espElements = {}
+
+-- ================= FUNGSI BANTU =================
+local function getHRP()
+    return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function getDistance(pos1, pos2)
+    return (pos1 - pos2).Magnitude
+end
+
+-- ================= DETEKSI HOOK (ADVANCED) =================
+local function isHook(obj)
+    if not obj then return false end
+    
+    local name = string.lower(obj.Name)
+    
+    -- Method 1: Check nama umum hook
+    local hookNames = {
+        "hook", "gantungan", "hanger", "gallows", 
+        "scaffold", "hanging", "sacrifice", "post",
+        "sacri", "meat", "entity", "basement"
+    }
+    
+    for _, hookName in ipairs(hookNames) do
+        if name:find(hookName) then
+            return true
+        end
+    end
+    
+    -- Method 2: Check attribute
+    local objType = obj:GetAttribute("Type") or obj:GetAttribute("ObjectType")
+    if objType then
+        local typeStr = string.lower(tostring(objType))
+        if typeStr:find("hook") or typeStr:find("hang") or typeStr:find("sacrifice") then
+            return true
+        end
+    end
+    
+    -- Method 3: Check tag
+    if obj:HasTag("Hook") or obj:HasTag("SacrificeHook") or obj:HasTag("Hanger") then
+        return true
+    end
+    
+    -- Method 4: Check parent name (untuk model hook)
+    if obj.Parent then
+        local parentName = string.lower(obj.Parent.Name)
+        if parentName:find("hook") or parentName:find("hang") or parentName:find("sacrifice") then
+            return true
+        end
+    end
+    
+    -- Method 5: Check berdasarkan material dan ukuran (hook biasanya metal dan tinggi)
+    if obj:IsA("BasePart") then
+        if obj.Material == Enum.Material.Metal or 
+           obj.Material == Enum.Material.CorrodedMetal or
+           obj.Material == Enum.Material.DiamondPlate then
+            -- Cek ukuran (hook biasanya tinggi dan kecil)
+            if obj.Size.Y > 5 and obj.Size.X < 5 and obj.Size.Z < 5 then
+                return true
+            end
+        end
+    end
+    
+    -- Method 6: Check model structure (hook biasanya punya bagian tertentu)
+    if obj:IsA("Model") then
+        local hasHookPart = obj:FindFirstChild("Hook") or 
+                           obj:FindFirstChild("Chain") or
+                           obj:FindFirstChild("Hanger")
+        if hasHookPart then
+            return true
+        end
+    end
+    
+    return false
+end
+
+local function getHookPosition(hook)
+    if hook:IsA("Model") then
+        return hook:GetPivot().Position
+    elseif hook:IsA("BasePart") then
+        return hook.Position
+    elseif hook:FindFirstChild("HumanoidRootPart") then
+        return hook.HumanoidRootPart.Position
+    elseif hook.PrimaryPart then
+        return hook.PrimaryPart.Position
+    else
+        -- Cari part pertama dalam model
+        local firstPart = hook:FindFirstChildWhichIsA("BasePart")
+        if firstPart then
+            return firstPart.Position
+        end
+    end
+    return nil
+end
+
+local function findAllHooks()
+    local hooks = {}
+    
+    -- Scan di Workspace
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if isHook(obj) and not hookCache[obj] then
+            local pos = getHookPosition(obj)
+            if pos then
+                table.insert(hooks, obj)
+                hookCache[obj] = true
+            end
+        end
+    end
+    
+    return hooks
+end
+
+-- ================= ESP IMPLEMENTATION =================
+local function createHighlight(hook)
+    -- Cari root object untuk highlight
+    local targetObj = hook
+    if hook:IsA("Model") then
+        targetObj = hook
+    elseif hook.Parent and hook.Parent:IsA("Model") then
+        targetObj = hook.Parent
+    end
+    
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "Hook_Highlight"
+    highlight.Adornee = targetObj
+    highlight.FillColor = Config.HighlightColor
+    highlight.OutlineColor = Color3.new(1, 1, 1)
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.Parent = targetObj
+    
+    return highlight
+end
+
+local function createBillboard(hook)
+    local pos = getHookPosition(hook)
+    if not pos then return nil end
+    
+    -- Cari part untuk attach billboard
+    local attachPart = nil
+    if hook:IsA("BasePart") then
+        attachPart = hook
+    elseif hook:IsA("Model") then
+        attachPart = hook:FindFirstChildWhichIsA("BasePart")
+    end
+    
+    if not attachPart then return nil end
+    
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "Hook_Billboard"
+    bb.Size = UDim2.new(0, 120, 0, 50)
+    bb.StudsOffset = Vector3.new(0, 3, 0)
+    bb.AlwaysOnTop = true
+    bb.MaxDistance = Config.MaxDistance
+    bb.Parent = attachPart
+    
+    local container = Instance.new("Frame", bb)
+    container.Name = "Container"
+    container.BackgroundTransparency = 1
+    container.Size = UDim2.new(1, 0, 1, 0)
+    
+    -- Icon/Emoji
+    local icon = Instance.new("TextLabel", container)
+    icon.Name = "Icon"
+    icon.BackgroundTransparency = 1
+    icon.Size = UDim2.new(1, 0, 0.4, 0)
+    icon.Position = UDim2.new(0, 0, 0, 0)
+    icon.Font = Enum.Font.GothamBold
+    icon.TextSize = 20
+    icon.TextColor3 = Config.HighlightColor
+    icon.TextXAlignment = Enum.TextXAlignment.Center
+    icon.TextYAlignment = Enum.TextYAlignment.Center
+    icon.Text = "🪝" -- Hook emoji
+    
+    -- Nama
+    local text = Instance.new("TextLabel", container)
+    text.Name = "Text"
+    text.BackgroundTransparency = 1
+    text.Size = UDim2.new(1, 0, 0.3, 0)
+    text.Position = UDim2.new(0, 0, 0.4, 0)
+    text.Font = Enum.Font.GothamBold
+    text.TextSize = 14
+    text.TextColor3 = Config.TextColor
+    text.TextXAlignment = Enum.TextXAlignment.Center
+    text.TextYAlignment = Enum.TextYAlignment.Center
+    text.Text = "HOOK"
+    
+    -- Jarak
+    local distLabel = Instance.new("TextLabel", container)
+    distLabel.Name = "Distance"
+    distLabel.BackgroundTransparency = 1
+    distLabel.Size = UDim2.new(1, 0, 0.3, 0)
+    distLabel.Position = UDim2.new(0, 0, 0.7, 0)
+    distLabel.Font = Enum.Font.Gotham
+    distLabel.TextSize = 12
+    distLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    distLabel.TextXAlignment = Enum.TextXAlignment.Center
+    distLabel.TextYAlignment = Enum.TextYAlignment.Center
+    distLabel.Text = "0m"
+    
+    return bb
+end
+
+local function applyESP(hook)
+    if espElements[hook] then return end
+    
+    local highlight = createHighlight(hook)
+    local billboard = createBillboard(hook)
+    
+    if highlight or billboard then
+        espElements[hook] = {
+            highlight = highlight,
+            billboard = billboard,
+            object = hook
+        }
+    end
+end
+
+local function cleanupESP(hook)
+    if espElements[hook] then
+        if espElements[hook].highlight then
+            pcall(function() espElements[hook].highlight:Destroy() end)
+        end
+        if espElements[hook].billboard then
+            pcall(function() espElements[hook].billboard:Destroy() end)
+        end
+        espElements[hook] = nil
+    end
+end
+
+-- ================= UPDATE DISTANCE =================
+local function updateDistances()
+    local myHRP = getHRP()
+    if not myHRP then return end
+    
+    for hook, elements in pairs(espElements) do
+        if hook and hook.Parent and elements.billboard and elements.billboard.Parent then
+            local hookPos = getHookPosition(hook)
+            if hookPos then
+                local dist = getDistance(myHRP.Position, hookPos)
+                
+                local distLabel = elements.billboard.Container and elements.billboard.Container:FindFirstChild("Distance")
+                if distLabel then
+                    distLabel.Text = string.format("%.0fm", dist)
+                    
+                    -- Color based on distance (hijau = dekat, merah = jauh)
+                    if dist < 50 then
+                        distLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+                    elseif dist < 150 then
+                        distLabel.TextColor3 = Color3.fromRGB(255, 255, 100)
+                    else
+                        distLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+                    end
+                end
+            end
+        else
+            cleanupESP(hook)
+        end
+    end
+end
+
+-- ================= SCAN & SETUP =================
+local function scanAndSetupHooks()
+    local hooks = findAllHooks()
+    
+    for _, hook in ipairs(hooks) do
+        applyESP(hook)
+    end
+    
+    return #hooks
+end
+
+-- ================= MONITOR NEW HOOKS =================
+local function monitorNewHooks()
+    Workspace.DescendantAdded:Connect(function(obj)
+        task.wait(0.1)
+        if isHook(obj) and not espElements[obj] then
+            applyESP(obj)
+        end
+    end)
+    
+    Workspace.DescendantRemoving:Connect(function(obj)
+        if espElements[obj] then
+            cleanupESP(obj)
+            hookCache[obj] = nil
+        end
+    end)
+end
+
+-- ================= MAIN LOOP =================
+RunService.Heartbeat:Connect(function()
+    updateDistances()
+end)
+
+-- Periodic re-scan untuk hook yang mungkin terlewat
+task.spawn(function()
+    while task.wait(5) do
+        pcall(scanAndSetupHooks)
+    end
+end)
+
+-- ================= INIT =================
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🪝 SCANNING FOR HOOKS...")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+local hookCount = scanAndSetupHooks()
+monitorNewHooks()
+
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("✅ ESP HOOK ACTIVE!")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print(string.format("🪝 Hooks found: %d", hookCount))
+print("📍 Distance: Real-time update")
+print("👁️  Max distance: 500 studs")
+print("🔄 Auto-detect new hooks: ON")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+-- Notifikasi
+pcall(function()
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "🪝 ESP Hook Active",
+        Text = string.format("%d hooks detected!", hookCount),
+        Duration = 5,
+    })
+end)
+
+task.wait(0.5)
+
+pcall(function()
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "✅ Auto-Detect ON",
+        Text = "New hooks akan otomatis ter-detect",
+        Duration = 4,
+    })
+end)
