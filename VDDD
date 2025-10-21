@@ -1,0 +1,166 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+   Name = "ToingHub",
+   LoadingTitle = "Sabar Nyet..",
+   LoadingSubtitle = "by tuwing",
+   ConfigurationSaving = {
+      Enabled = true,
+      FolderName = nil,
+      FileName = "BySiriusHub"
+   },
+   Discord = {
+      Enabled = false,
+      Invite = "noinvitelink",
+      RememberJoins = true
+   },
+   KeySystem = false,
+   KeySettings = {
+      Title = "Bu Sirius Key",
+      Subtitle = "Key System",
+      Note = "No key needed",
+      FileName = "Key",
+      SaveKey = false,
+      GrabKeyFromSite = false,
+      Key = {"Hello"}
+   }
+})
+
+Rayfield:Notify({
+   Title = "tuwing",
+   Content = "hai memek??",
+   Duration = 3,
+   Image = 4483345998,
+   Actions = {
+      Ignore = {
+         Name = "Okay!",
+         Callback = function()
+            print("User acknowledged notification")
+         end
+      },
+   },
+})
+
+-- Tab Survivor
+local SurvivorTab = Window:CreateTab("Survivor", 4483345998)
+local SurvivorSection = SurvivorTab:CreateSection("Fitur")
+
+local AutoGenButton = SurvivorTab:CreateButton({
+   Name = "Auto Generator",
+   Callback = function()
+      print("Auto Generator activated")
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/gene"))()
+   end,
+})
+
+local AutoHealButton = SurvivorTab:CreateButton({
+   Name = "Auto Heal",
+   Callback = function()
+      print("Auto Heal activated")
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/auto%20heal"))()
+   end,
+})
+
+local SpeedButton = SurvivorTab:CreateButton({
+   Name = "Speed",
+   Callback = function()
+      print("Speed activated")
+      loadstring(game:HttpGet("https://pastebin.com/raw/tDx7pM8q"))()
+   end,
+})
+
+local TeleportButton = SurvivorTab:CreateButton({
+   Name = "Teleport to Player",
+   Callback = function()
+      print("Teleport to Player activated")
+      loadstring(game:HttpGet("https://pastebin.com/raw/4TeHfrgu"))()
+   end,
+})
+
+local HopServerButton = SurvivorTab:CreateButton({
+   Name = "Hop Server",
+   Callback = function()
+      print("Server Hop activated")
+      loadstring(game:HttpGet("https://pastebin.com/raw/BpUXKL1V"))()
+   end,
+})
+
+-- Tab Visual
+local VisualTab = Window:CreateTab("VISUAL", 4483345998)
+local VisualSection = VisualTab:CreateSection("FITUR")
+
+local EspGenButton = VisualTab:CreateButton({
+   Name = "ESP Generator",
+   Callback = function()
+      print("ESP Generator activated")
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/esp%20gene"))()
+   end,
+})
+
+local EspKillerButton = VisualTab:CreateButton({
+   Name = "ESP Killer",
+   Callback = function()
+      print("ESP Killer activated")
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/Esp%20Killer"))()
+   end,
+})
+
+local EspTeamButton = VisualTab:CreateButton({  -- FIXED: Removed space in variable name
+   Name = "Esp Team",
+   Callback = function()
+      print("Esp Team activated")
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/esp%20team"))()
+   end,
+})
+
+local NoFogButton = VisualTab:CreateButton({
+   Name = "NO FOG",
+   Callback = function()
+      print("No Fog activated")
+      loadstring(game:HttpGet("https://pastebin.com/raw/t3AUuzV6"))()
+   end,
+})
+
+-- Tab Killer (FIXED: Added proper comment)
+local KillerTab = Window:CreateTab("Killer", 4483345998)  -- FIXED: Changed from VisualTab to KillerTab
+local KillerSection = KillerTab:CreateSection("FITUR")    -- FIXED: Changed to KillerSection
+
+local Fix3DButton = KillerTab:CreateButton({  -- FIXED: Changed from VisualTab to KillerTab
+   Name = "FIX 3D",
+   Callback = function()
+      print("Fix3D activated")
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/Fix%20Kamera%203D"))()
+   end,
+})
+
+local HookButton = KillerTab:CreateButton({  -- FIXED: Changed from VisualTab to KillerTab
+   Name = "ESP HOOK (Beta)",
+   Callback = function()
+      print("ESP HOOK activated")
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/hook"))()
+   end,
+})
+
+local NoFlashButton = KillerTab:CreateButton({  -- FIXED: Changed from VisualTab to KillerTab
+   Name = "Anti Flash (Beta)",
+   Callback = function()
+      print("Anti Flash activated")
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/no%20flash"))()
+   end,
+})
+
+local CooldownButton = KillerTab:CreateButton({  -- FIXED: Changed from VisualTab to KillerTab
+   Name = "2% Cooldown (Beta)",
+   Callback = function()
+      print("2% Cooldown activated")  -- FIXED: Changed text from "No Fog"
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/2%25%20cooldown"))()
+   end,
+})
+
+local VaultPalletButton = KillerTab:CreateButton({  -- FIXED: Changed from VisualTab to KillerTab
+   Name = "Lewati Pallet (Beta)",
+   Callback = function()
+      print("Vault Pallet activated")
+      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/vault%20valet"))()
+   end,
+})
