@@ -1,0 +1,365 @@
+-- ===================================================================
+--                  AUTO HEAL TEAMMATE - DEBUG VERSION
+-- Dengan notifikasi sukses/gagal
+-- ===================================================================
+
+local success, errorMsg = pcall(function()
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+-- ================= KONFIGURASI =================
+local Config = {
+    MaxDistance = 10,
+    CheckInterval = 0.5,
+    HealCooldown = 2,
+}
+
+-- ================= CACHE DATA =================
+local healRemotes = {}
+local healPrompts = {}
+local lastHealTime = 0
+local lastScanTime = 0
+local scanCooldown = 3
+
+-- ================= UTILS =================
+local function getHRP(player)
+    return player and player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHumanoid(player)
+    return player and player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+end
+
+local function getDistance(pos1, pos2)
+    return (pos1 - pos2).Magnitude
+end
+
+-- ================= TEAMMATE CHECK =================
+local function isTeammate(player)
+    if not player or player == LocalPlayer then return false end
+    
+    if LocalPlayer.Team and player.Team then
+        return LocalPlayer.Team == player.Team
+    end
+    
+    if LocalPlayer.TeamColor and player.TeamColor then
+        return LocalPlayer.TeamColor == player.TeamColor
+    end
+    
+    local myRole = LocalPlayer:GetAttribute("Role")
+    local theirRole = player:GetAttribute("Role")
+    if myRole and theirRole then
+        local myRoleStr = string.lower(tostring(myRole))
+        local theirRoleStr = string.lower(tostring(theirRole))
+        return myRoleStr == theirRoleStr and not myRoleStr:find("killer")
+    end
+    
+    return false
+end
+
+-- ================= INJURED CHECK =================
+local function isInjured(player)
+    local humanoid = getHumanoid(player)
+    if not humanoid then return false end
+    
+    if humanoid.Health < humanoid.MaxHealth * 0.99 then
+        return true
+    end
+    
+    local state = player:GetAttribute("State")
+    if state then
+        local stateStr = string.lower(tostring(state))
+        return stateStr:find("injured") or stateStr:find("damaged") or stateStr:find("hurt") or stateStr:find("down")
+    end
+    
+    return false
+end
+
+-- ================= FIND NEAREST =================
+local function findNearestInjured()
+    local myHRP = getHRP(LocalPlayer)
+    if not myHRP then return nil end
+    
+    local myPos = myHRP.Position
+    local nearest = nil
+    local nearestDist = Config.MaxDistance
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and isTeammate(player) then
+            local theirHRP = getHRP(player)
+            if theirHRP then
+                local dist = getDistance(myPos, theirHRP.Position)
+                
+                if dist <= nearestDist and isInjured(player) then
+                    nearest = player
+                    nearestDist = dist
+                end
+            end
+        end
+    end
+    
+    return nearest
+end
+
+-- ================= CACHE HEAL METHODS =================
+local function cacheHealMethods()
+    local currentTime = tick()
+    
+    if currentTime - lastScanTime < scanCooldown then
+        return
+    end
+    
+    lastScanTime = currentTime
+    healRemotes = {}
+    
+    local scanned = 0
+    for _, remote in ipairs(ReplicatedStorage:GetChildren()) do
+        scanned = scanned + 1
+        if scanned > 100 then break end
+        
+        if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
+            local name = string.lower(remote.Name)
+            if name:find("heal") or name:find("help") or name:find("revive") or name:find("rescue") then
+                table.insert(healRemotes, remote)
+            end
+        end
+    end
+    
+    for _, folder in ipairs(ReplicatedStorage:GetChildren()) do
+        if folder:IsA("Folder") then
+            for _, remote in ipairs(folder:GetChildren()) do
+                if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
+                    local name = string.lower(remote.Name)
+                    if name:find("heal") or name:find("help") or name:find("revive") then
+                        table.insert(healRemotes, remote)
+                    end
+                end
+            end
+        end
+    end
+    
+    print("✅ Cached " .. #healRemotes .. " heal remotes")
+end
+
+-- ================= CACHE PROMPTS =================
+local function cacheProximityPrompts(character)
+    healPrompts[character] = {}
+    
+    for _, obj in ipairs(character:GetChildren()) do
+        if obj:IsA("ProximityPrompt") then
+            local name = string.lower(obj.Name)
+            if name:find("heal") or name:find("help") or name:find("revive") then
+                table.insert(healPrompts[character], obj)
+            end
+        end
+    end
+end
+
+-- ================= PERFORM HEAL =================
+local function performHeal(targetPlayer)
+    local currentTime = tick()
+    
+    if currentTime - lastHealTime < Config.HealCooldown then
+        return
+    end
+    
+    local myHRP = getHRP(LocalPlayer)
+    local targetHRP = getHRP(targetPlayer)
+    
+    if not myHRP or not targetHRP then return end
+    
+    if getDistance(myHRP.Position, targetHRP.Position) > Config.MaxDistance then
+        return
+    end
+    
+    lastHealTime = currentTime
+    
+    if targetPlayer.Character then
+        if not healPrompts[targetPlayer.Character] then
+            cacheProximityPrompts(targetPlayer.Character)
+        end
+        
+        for _, prompt in ipairs(healPrompts[targetPlayer.Character]) do
+            if prompt and prompt.Parent then
+                pcall(function()
+                    fireproximityprompt(prompt)
+                end)
+            end
+        end
+    end
+    
+    for _, remote in ipairs(healRemotes) do
+        if remote and remote.Parent then
+            pcall(function()
+                if remote:IsA("RemoteEvent") then
+                    remote:FireServer(targetPlayer)
+                else
+                    remote:InvokeServer(targetPlayer)
+                end
+            end)
+        end
+    end
+    
+    print("🏥 Healing: " .. targetPlayer.Name)
+end
+
+-- ================= SKILL CHECK BYPASS =================
+local function setupSkillCheckBypass()
+    print("🔧 Setting up skill check bypass...")
+    
+    LocalPlayer.PlayerGui.DescendantAdded:Connect(function(gui)
+        task.wait(0.05)
+        
+        if gui:IsA("Frame") or gui:IsA("ImageLabel") then
+            local name = string.lower(gui.Name)
+            
+            if name:find("skill") or name:find("check") or name:find("qte") then
+                gui.Visible = false
+                
+                for _, child in ipairs(gui:GetChildren()) do
+                    if child:IsA("TextButton") or child:IsA("ImageButton") then
+                        local btnName = string.lower(child.Name)
+                        if btnName:find("success") or btnName:find("perfect") or btnName:find("good") then
+                            task.defer(function()
+                                pcall(function()
+                                    for _, conn in ipairs(getconnections(child.MouseButton1Click)) do
+                                        conn:Fire()
+                                    end
+                                end)
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    local hookSuccess = pcall(function()
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            
+            if method == "FireServer" or method == "InvokeServer" then
+                local name = string.lower(tostring(self))
+                
+                if name:find("skill") or name:find("check") or name:find("qte") then
+                    local args = {...}
+                    args[1] = "Success"
+                    args[2] = true
+                    return oldNamecall(self, unpack(args))
+                end
+            end
+            
+            return oldNamecall(self, ...)
+        end)
+    end)
+    
+    if hookSuccess then
+        print("✅ Hook installed")
+    else
+        print("⚠️ Hook failed (executor may not support)")
+    end
+end
+
+-- ================= MAIN LOOP =================
+local function mainLoop()
+    local target = findNearestInjured()
+    
+    if target then
+        performHeal(target)
+    end
+end
+
+-- ================= CHARACTER HANDLER =================
+local function onCharacterAdded(character)
+    task.wait(0.5)
+    healPrompts[character] = nil
+end
+
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(onCharacterAdded)
+end)
+
+for _, player in ipairs(Players:GetPlayers()) do
+    if player.Character then
+        onCharacterAdded(player.Character)
+    end
+    player.CharacterAdded:Connect(onCharacterAdded)
+end
+
+-- ================= INIT =================
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🚀 AUTO HEAL - INITIALIZING...")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+setupSkillCheckBypass()
+cacheHealMethods()
+
+print("🔄 Starting main loop...")
+task.spawn(function()
+    while task.wait(Config.CheckInterval) do
+        pcall(mainLoop)
+    end
+end)
+
+print("🔄 Starting cache refresh...")
+task.spawn(function()
+    while task.wait(5) do
+        pcall(cacheHealMethods)
+    end
+end)
+
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("✅ AUTO HEAL LOADED SUCCESSFULLY!")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🏥 Dekati teammate untuk heal")
+print("🎯 Skill check bypass: ACTIVE")
+print("⚡ Optimized mode: ON")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+-- Success notification
+game.StarterGui:SetCore("SendNotification", {
+    Title = "✅ Auto Heal Loaded",
+    Text = "Script running successfully!",
+    Duration = 5,
+})
+
+task.wait(1)
+
+game.StarterGui:SetCore("SendNotification", {
+    Title = "💚 Auto Heal Active",
+    Text = "Dekati teammate injured!",
+    Duration = 4,
+})
+
+end) -- End of pcall
+
+-- ================= ERROR HANDLING =================
+if not success then
+    warn("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    warn("❌ AUTO HEAL FAILED TO LOAD!")
+    warn("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    warn("Error: " .. tostring(errorMsg))
+    warn("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    
+    pcall(function()
+        game.StarterGui:SetCore("SendNotification", {
+            Title = "❌ Auto Heal FAILED",
+            Text = "Check console (F9) for error!",
+            Duration = 10,
+        })
+    end)
+    
+    pcall(function()
+        game.StarterGui:SetCore("SendNotification", {
+            Title = "⚠️ Error Details",
+            Text = tostring(errorMsg):sub(1, 50),
+            Duration = 10,
+        })
+    end)
+else
+    print("✅ Script executed without errors")
+end
