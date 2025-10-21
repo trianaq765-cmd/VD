@@ -1,0 +1,255 @@
+-- ============================================
+-- VIOLENCE DISTRICT - HOOK ESP (FINAL)
+-- Based on: workspace.Map.Hook
+-- ============================================
+
+_G.VD_HookESP = _G.VD_HookESP or {
+    Enabled = false,
+    Objects = {},
+    ProcessedHooks = {},
+    Connection = nil
+}
+
+local HookESP = _G.VD_HookESP
+
+-- Cek apakah object sudah di-ESP
+local function IsProcessed(obj)
+    return table.find(HookESP.ProcessedHooks, obj) ~= nil
+end
+
+-- Create ESP untuk satu hook
+local function CreateHookESP(hook)
+    if IsProcessed(hook) then return end
+    
+    local part = hook:IsA("Model") and hook.PrimaryPart or hook
+    if not part or not part:IsA("BasePart") then return end
+    
+    -- Skip jika sudah ada ESP
+    if part:FindFirstChild("VD_HookESP") then return end
+    
+    print("[VD Hook ESP] Creating ESP for:", hook.Name)
+    
+    -- Billboard GUI
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "VD_HookESP"
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 200, 0, 120)
+    billboard.StudsOffset = Vector3.new(0, 6, 0)
+    billboard.Adornee = part
+    billboard.Parent = part
+    
+    -- Background Frame
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(139, 0, 0)
+    frame.BackgroundTransparency = 0.2
+    frame.BorderSizePixel = 0
+    frame.Parent = billboard
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 12)
+    corner.Parent = frame
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 50, 50)
+    stroke.Thickness = 2
+    stroke.Parent = frame
+    
+    -- Icon
+    local iconLabel = Instance.new("TextLabel")
+    iconLabel.Size = UDim2.new(1, 0, 0.4, 0)
+    iconLabel.Position = UDim2.new(0, 0, 0.05, 0)
+    iconLabel.BackgroundTransparency = 1
+    iconLabel.Text = "🪝"
+    iconLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+    iconLabel.Font = Enum.Font.SourceSansBold
+    iconLabel.TextSize = 40
+    iconLabel.Parent = billboard
+    
+    -- Title
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1, 0, 0.25, 0)
+    titleLabel.Position = UDim2.new(0, 0, 0.45, 0)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = "HOOK"
+    titleLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
+    titleLabel.TextStrokeTransparency = 0
+    titleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    titleLabel.Font = Enum.Font.SourceSansBold
+    titleLabel.TextSize = 24
+    titleLabel.Parent = billboard
+    
+    -- Distance Label
+    local distLabel = Instance.new("TextLabel")
+    distLabel.Size = UDim2.new(1, 0, 0.25, 0)
+    distLabel.Position = UDim2.new(0, 0, 0.7, 0)
+    distLabel.BackgroundTransparency = 1
+    distLabel.Text = "0m"
+    distLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    distLabel.TextStrokeTransparency = 0
+    distLabel.Font = Enum.Font.SourceSans
+    distLabel.TextSize = 18
+    distLabel.Parent = billboard
+    
+    -- Highlight
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "VD_HookHighlight"
+    highlight.FillColor = Color3.fromRGB(255, 0, 0)
+    highlight.FillTransparency = 0.6
+    highlight.OutlineColor = Color3.fromRGB(255, 50, 50)
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = hook
+    
+    -- Distance updater
+    spawn(function()
+        while billboard.Parent and HookESP.Enabled do
+            wait(0.5)
+            
+            local player = game.Players.LocalPlayer
+            if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                local distance = math.floor((part.Position - player.Character.HumanoidRootPart.Position).Magnitude)
+                distLabel.Text = distance .. "m"
+                
+                -- Color coding by distance
+                if distance < 20 then
+                    frame.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+                    stroke.Color = Color3.fromRGB(255, 100, 100)
+                elseif distance < 50 then
+                    frame.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+                    stroke.Color = Color3.fromRGB(255, 70, 70)
+                else
+                    frame.BackgroundColor3 = Color3.fromRGB(139, 0, 0)
+                    stroke.Color = Color3.fromRGB(255, 50, 50)
+                end
+                
+                -- Hide if too far
+                if distance > 500 then
+                    billboard.Enabled = false
+                else
+                    billboard.Enabled = true
+                end
+            end
+        end
+        
+        -- Cleanup
+        if billboard and billboard.Parent then billboard:Destroy() end
+        if highlight and highlight.Parent then highlight:Destroy() end
+    end)
+    
+    table.insert(HookESP.Objects, billboard)
+    table.insert(HookESP.Objects, highlight)
+    table.insert(HookESP.ProcessedHooks, hook)
+end
+
+-- Scan all hooks di Map folder
+local function ScanMapForHooks()
+    local mapFolder = workspace:FindFirstChild("Map")
+    if not mapFolder then
+        warn("[VD Hook ESP] Map folder not found!")
+        return 0
+    end
+    
+    local count = 0
+    
+    -- Scan semua children di Map folder
+    for _, obj in pairs(mapFolder:GetChildren()) do
+        -- Cek apakah ini hook
+        if obj.Name == "Hook" or obj.Name:lower():find("hook") then
+            if not IsProcessed(obj) then
+                CreateHookESP(obj)
+                count = count + 1
+            end
+        end
+    end
+    
+    return count
+end
+
+-- Clear semua ESP
+local function ClearAllESP()
+    for _, obj in pairs(HookESP.Objects) do
+        if obj and obj.Parent then
+            pcall(function()
+                obj:Destroy()
+            end)
+        end
+    end
+    
+    HookESP.Objects = {}
+    HookESP.ProcessedHooks = {}
+    
+    if HookESP.Connection then
+        HookESP.Connection:Disconnect()
+        HookESP.Connection = nil
+    end
+    
+    -- Backup cleanup
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj.Name == "VD_HookESP" or obj.Name == "VD_HookHighlight" then
+            pcall(function()
+                obj:Destroy()
+            end)
+        end
+    end
+end
+
+-- Enable ESP
+function EnableVDHookESP()
+    if HookESP.Enabled then
+        print("[VD Hook ESP] Already enabled!")
+        return
+    end
+    
+    HookESP.Enabled = true
+    HookESP.ProcessedHooks = {}
+    
+    print("[VD Hook ESP] Scanning workspace.Map for hooks...")
+    
+    local count = ScanMapForHooks()
+    
+    print("[VD Hook ESP] Found " .. count .. " hooks in Map folder")
+    
+    -- Monitor new hooks yang ditambahkan ke Map
+    local mapFolder = workspace:FindFirstChild("Map")
+    if mapFolder then
+        HookESP.Connection = mapFolder.ChildAdded:Connect(function(child)
+            if HookESP.Enabled then
+                wait(0.2)
+                if child.Name == "Hook" or child.Name:lower():find("hook") then
+                    CreateHookESP(child)
+                end
+            end
+        end)
+    end
+    
+    print("[VD Hook ESP] ✓ Enabled!")
+end
+
+-- Disable ESP
+function DisableVDHookESP()
+    HookESP.Enabled = false
+    ClearAllESP()
+    print("[VD Hook ESP] ✗ Disabled!")
+end
+
+-- Toggle ESP
+function ToggleVDHookESP()
+    if HookESP.Enabled then
+        DisableVDHookESP()
+    else
+        EnableVDHookESP()
+    end
+end
+
+-- Auto enable
+EnableVDHookESP()
+
+print("================================")
+print("Violence District - Hook ESP")
+print("Location: workspace.Map.Hook")
+print("Commands:")
+print("  EnableVDHookESP()  - Turn ON")
+print("  DisableVDHookESP() - Turn OFF")
+print("  ToggleVDHookESP()  - Toggle")
+print("================================")
