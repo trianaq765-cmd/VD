@@ -1,0 +1,346 @@
+-- ===================================================================
+--                  AUTO GENERATOR REPAIR - CONSOLE ONLY
+-- No UI, pure console logging untuk monitoring
+-- ===================================================================
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+-- ================= KONFIGURASI =================
+local Config = {
+    MaxDistance = 10,
+    CheckInterval = 0.5,
+    RepairCooldown = 1,
+    ScanCooldown = 5,
+    DebugMode = true,  -- Set false untuk disable log detail
+}
+
+-- ================= CACHE DATA =================
+local generatorCache = {}
+local repairRemotes = {}
+local repairPrompts = {}
+local lastRepairTime = 0
+local lastScanTime = 0
+local isScanning = false
+local repairAttempts = 0
+local successfulRepairs = 0
+
+-- ================= UTILS =================
+local function getHRP()
+    return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function getDistance(pos1, pos2)
+    return (pos1 - pos2).Magnitude
+end
+
+local function log(msg)
+    if Config.DebugMode then
+        print("[GEN] " .. msg)
+    end
+end
+
+-- ================= GENERATOR DETECTION =================
+local function isGenerator(obj)
+    if not obj then return false end
+    local name = string.lower(obj.Name)
+    return name:find("generator") or name:find("genset") or name:find("gen") or 
+           name:find("repair") or name:find("machine") or name:find("engine")
+end
+
+local function getGenPosition(gen)
+    if gen:IsA("Model") then
+        return gen:GetPivot().Position
+    elseif gen:IsA("BasePart") then
+        return gen.Position
+    else
+        return nil
+    end
+end
+
+-- ================= CACHE GENERATORS =================
+local function cacheGenerators()
+    local currentTime = tick()
+    
+    if isScanning or (currentTime - lastScanTime < Config.ScanCooldown) then
+        return
+    end
+    
+    isScanning = true
+    lastScanTime = currentTime
+    
+    local oldCount = #generatorCache
+    generatorCache = {}
+    
+    local scanned = 0
+    local maxScan = 500
+    
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        scanned = scanned + 1
+        if scanned > maxScan then break end
+        
+        if isGenerator(obj) then
+            local pos = getGenPosition(obj)
+            if pos then
+                table.insert(generatorCache, {obj = obj, pos = pos})
+            end
+        end
+        
+        if obj:IsA("Folder") or obj:IsA("Model") then
+            for _, child in ipairs(obj:GetChildren()) do
+                scanned = scanned + 1
+                if scanned > maxScan then break end
+                
+                if isGenerator(child) then
+                    local pos = getGenPosition(child)
+                    if pos then
+                        table.insert(generatorCache, {obj = child, pos = pos})
+                    end
+                end
+            end
+        end
+    end
+    
+    isScanning = false
+    
+    if #generatorCache ~= oldCount then
+        log(string.format("Scan complete: %d generators cached (scanned %d objects)", #generatorCache, scanned))
+    end
+end
+
+-- ================= CACHE REPAIR METHODS =================
+local function cacheRepairMethods()
+    if #repairRemotes > 0 then return end
+    
+    local scanned = 0
+    for _, remote in ipairs(ReplicatedStorage:GetChildren()) do
+        scanned = scanned + 1
+        if scanned > 100 then break end
+        
+        if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
+            local name = string.lower(remote.Name)
+            if name:find("repair") or name:find("generator") or name:find("fix") or name:find("interact") then
+                table.insert(repairRemotes, remote)
+            end
+        end
+    end
+    
+    for _, folder in ipairs(ReplicatedStorage:GetChildren()) do
+        if folder:IsA("Folder") then
+            for _, remote in ipairs(folder:GetChildren()) do
+                if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
+                    local name = string.lower(remote.Name)
+                    if name:find("repair") or name:find("generator") or name:find("fix") then
+                        table.insert(repairRemotes, remote)
+                    end
+                end
+            end
+        end
+    end
+    
+    log("Cached " .. #repairRemotes .. " repair remotes")
+end
+
+-- ================= CACHE PROMPTS =================
+local function cachePromptsForGen(gen)
+    if repairPrompts[gen] then return end
+    
+    repairPrompts[gen] = {}
+    
+    for _, obj in ipairs(gen:GetChildren()) do
+        if obj:IsA("ProximityPrompt") then
+            local name = string.lower(obj.Name)
+            if name:find("repair") or name:find("fix") or name:find("interact") or name:find("use") then
+                table.insert(repairPrompts[gen], obj)
+            end
+        end
+    end
+end
+
+-- ================= FIND NEAREST =================
+local function findNearestGenerator()
+    local myHRP = getHRP()
+    if not myHRP then return nil end
+    
+    local myPos = myHRP.Position
+    local nearest = nil
+    local nearestDist = Config.MaxDistance
+    
+    for _, data in ipairs(generatorCache) do
+        if data.obj and data.obj.Parent then
+            local dist = getDistance(myPos, data.pos)
+            
+            if dist <= nearestDist then
+                nearest = data.obj
+                nearestDist = dist
+            end
+        end
+    end
+    
+    return nearest, nearestDist
+end
+
+-- ================= PERFORM REPAIR =================
+local function performRepair(generator, distance)
+    local currentTime = tick()
+    
+    if currentTime - lastRepairTime < Config.RepairCooldown then
+        return
+    end
+    
+    lastRepairTime = currentTime
+    
+    if not generator or not generator.Parent then return end
+    
+    repairAttempts = repairAttempts + 1
+    log(string.format("Repairing %s (%.1fm away) - Attempt #%d", generator.Name, distance, repairAttempts))
+    
+    cachePromptsForGen(generator)
+    
+    local promptsFired = 0
+    for _, prompt in ipairs(repairPrompts[generator]) do
+        if prompt and prompt.Parent then
+            pcall(function()
+                fireproximityprompt(prompt)
+                promptsFired = promptsFired + 1
+            end)
+        end
+    end
+    
+    local remotesFired = 0
+    for _, remote in ipairs(repairRemotes) do
+        if remote and remote.Parent then
+            pcall(function()
+                if remote:IsA("RemoteEvent") then
+                    remote:FireServer(generator)
+                else
+                    remote:InvokeServer(generator)
+                end
+                remotesFired = remotesFired + 1
+            end)
+        end
+    end
+    
+    if promptsFired > 0 or remotesFired > 0 then
+        successfulRepairs = successfulRepairs + 1
+        log(string.format("  → Fired %d prompts, %d remotes", promptsFired, remotesFired))
+    else
+        log("  ⚠ No repair methods found!")
+    end
+end
+
+-- ================= SKILL CHECK BYPASS =================
+local function setupSkillCheckBypass()
+    LocalPlayer.PlayerGui.DescendantAdded:Connect(function(gui)
+        task.wait(0.05)
+        
+        if gui:IsA("Frame") or gui:IsA("ImageLabel") then
+            local name = string.lower(gui.Name)
+            
+            if name:find("skill") or name:find("check") or name:find("qte") or name:find("calibration") then
+                for _, child in ipairs(gui:GetChildren()) do
+                    if child:IsA("TextButton") or child:IsA("ImageButton") then
+                        local btnName = string.lower(child.Name)
+                        if btnName:find("perfect") or btnName:find("great") or btnName:find("good") then
+                            task.defer(function()
+                                pcall(function()
+                                    for _, conn in ipairs(getconnections(child.MouseButton1Click)) do
+                                        conn:Fire()
+                                    end
+                                end)
+                            end)
+                            log("Skill check bypassed!")
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    pcall(function()
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            
+            if method == "FireServer" or method == "InvokeServer" then
+                local name = string.lower(tostring(self))
+                
+                if name:find("skill") or name:find("check") or name:find("qte") then
+                    local args = {...}
+                    args[1] = "Perfect"
+                    args[2] = true
+                    args[3] = 100
+                    return oldNamecall(self, unpack(args))
+                end
+            end
+            
+            return oldNamecall(self, ...)
+        end)
+    end)
+    
+    log("Skill check bypass installed")
+end
+
+-- ================= MAIN LOOP =================
+local function mainLoop()
+    local gen, dist = findNearestGenerator()
+    
+    if gen then
+        performRepair(gen, dist)
+    end
+end
+
+-- ================= STATUS REPORT =================
+local function printStatus()
+    print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("📊 AUTO GENERATOR STATUS REPORT")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(string.format("🔧 Generators cached: %d", #generatorCache))
+    print(string.format("🔄 Repair attempts: %d", repairAttempts))
+    print(string.format("✅ Successful repairs: %d", successfulRepairs))
+    print(string.format("📡 Repair remotes: %d", #repairRemotes))
+    print(string.format("⏱️  Uptime: %.0fs", tick() - (lastScanTime - Config.ScanCooldown)))
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+end
+
+-- ================= INIT =================
+print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🚀 AUTO GENERATOR - INITIALIZING")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+setupSkillCheckBypass()
+cacheRepairMethods()
+cacheGenerators()
+
+print("✅ Initialization complete")
+print("📍 Max repair distance: " .. Config.MaxDistance .. " studs")
+print("⏱️  Check interval: " .. Config.CheckInterval .. "s")
+print("🔄 Scan interval: " .. Config.ScanCooldown .. "s")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+-- Main loop
+task.spawn(function()
+    while task.wait(Config.CheckInterval) do
+        pcall(mainLoop)
+    end
+end)
+
+-- Cache refresh
+task.spawn(function()
+    while task.wait(5) do
+        pcall(cacheGenerators)
+    end
+end)
+
+-- Status report setiap 30 detik
+task.spawn(function()
+    while task.wait(30) do
+        printStatus()
+    end
+end)
+
+print("⚡ Script running in background mode")
+print("💡 Type 'printStatus()' in console for status report")
+print("")
