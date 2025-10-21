@@ -1,0 +1,321 @@
+-- ESP Generator Script (FIXED STATUS DETECTION)
+-- Merah = Rusak/Mati | Hijau = Sudah Diperbaiki/Hidup
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
+
+-- Konfigurasi Warna
+local COLOR_RUSAK = Color3.fromRGB(255, 0, 0) -- Merah
+local COLOR_HIDUP = Color3.fromRGB(0, 255, 0) -- Hijau
+local COLOR_PROGRESS = Color3.fromRGB(255, 255, 0) -- Kuning
+
+-- DEBUG MODE (Set true untuk melihat deteksi di console)
+local DEBUG_MODE = true
+
+-- Tabel untuk menyimpan ESP
+local espObjects = {}
+
+-- BLACKLIST
+local BLACKLIST_NAMES = {
+    "fence", "pagar", "wall", "dinding", "door", "pintu",
+    "window", "jendela", "stairs", "tangga", "roof", "atap",
+    "floor", "lantai", "tree", "pohon", "rock", "batu",
+    "pillar", "tiang", "pole", "column", "grass", "rumput"
+}
+
+-- Fungsi untuk print struktur generator (DEBUG)
+local function debugGenerator(generator)
+    if not DEBUG_MODE then return end
+    
+    print("\n=== DEBUG GENERATOR: " .. generator.Name .. " ===")
+    
+    -- Print Attributes
+    print("📌 Attributes:")
+    for _, attr in pairs(generator:GetAttributes()) do
+        print("  - " .. tostring(attr))
+    end
+    
+    -- Print Children
+    print("📦 Children:")
+    for _, child in pairs(generator:GetChildren()) do
+        if child:IsA("BoolValue") or child:IsA("NumberValue") or child:IsA("IntValue") or child:IsA("StringValue") then
+            print("  - " .. child.Name .. " (" .. child.ClassName .. ") = " .. tostring(child.Value))
+        elseif child:IsA("Light") then
+            print("  - " .. child.Name .. " (Light) Enabled: " .. tostring(child.Enabled))
+        elseif child:IsA("ParticleEmitter") then
+            print("  - " .. child.Name .. " (ParticleEmitter) Enabled: " .. tostring(child.Enabled))
+        end
+    end
+    
+    -- Print Descendants (lebih dalam)
+    print("🔍 Descendants (Values/Lights):")
+    for _, desc in pairs(generator:GetDescendants()) do
+        if desc:IsA("BoolValue") or desc:IsA("NumberValue") or desc:IsA("IntValue") then
+            print("  - " .. desc:GetFullName() .. " = " .. tostring(desc.Value))
+        elseif desc:IsA("Light") and desc.Enabled then
+            print("  - " .. desc:GetFullName() .. " (Light ON)")
+        elseif desc:IsA("ParticleEmitter") and desc.Enabled then
+            print("  - " .. desc:GetFullName() .. " (Particle ON)")
+        end
+    end
+    
+    print("==================\n")
+end
+
+-- Fungsi untuk cek apakah object adalah generator
+local function isGenerator(obj)
+    local name = obj.Name:lower()
+    
+    for _, blacklisted in pairs(BLACKLIST_NAMES) do
+        if name:find(blacklisted) then
+            return false
+        end
+    end
+    
+    local hasGeneratorInName = (obj.Name == "Generator") or name:find("generator")
+    
+    if not hasGeneratorInName then
+        return false
+    end
+    
+    if obj:IsA("Model") then
+        local hasParts = false
+        for _, child in pairs(obj:GetChildren()) do
+            if child:IsA("BasePart") then
+                hasParts = true
+                break
+            end
+        end
+        if not hasParts then
+            return false
+        end
+    end
+    
+    if obj:IsA("BasePart") then
+        local size = obj.Size
+        if size.X < 1.5 or size.Y < 1.5 or size.Z < 1.5 then
+            return false
+        end
+    end
+    
+    if not (obj:IsA("Model") or obj:IsA("BasePart")) then
+        return false
+    end
+    
+    return true
+end
+
+-- Fungsi untuk membuat ESP
+local function createESP(generator)
+    if espObjects[generator] then return end
+    
+    -- Debug generator pertama kali
+    debugGenerator(generator)
+    
+    local oldHighlight = generator:FindFirstChildOfClass("Highlight")
+    if oldHighlight then
+        oldHighlight:Destroy()
+    end
+    
+    local highlight = Instance.new("Highlight")
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.OutlineColor = COLOR_RUSAK
+    highlight.FillColor = COLOR_RUSAK
+    highlight.Parent = generator
+    
+    espObjects[generator] = {
+        highlight = highlight
+    }
+end
+
+-- Fungsi untuk cek status generator (DIPERBAIKI)
+local function checkGeneratorStatus(generator)
+    -- Metode 1: Cek nama (broken/rusak)
+    local name = generator.Name:lower()
+    if name:find("broken") or name:find("rusak") or name:find("off") then
+        if DEBUG_MODE then print("🔴 " .. generator.Name .. " = RUSAK (from name)") end
+        return "RUSAK"
+    end
+    if name:find("fixed") or name:find("repaired") or name:find("on") then
+        if DEBUG_MODE then print("🟢 " .. generator.Name .. " = HIDUP (from name)") end
+        return "HIDUP"
+    end
+    
+    -- Metode 2: Cek ALL attributes
+    for attrName, attrValue in pairs(generator:GetAttributes()) do
+        local attrNameLower = attrName:lower()
+        
+        -- Cek repair status
+        if attrNameLower:find("repair") or attrNameLower:find("fix") or attrNameLower:find("active") or attrNameLower:find("power") then
+            if attrValue == true then
+                if DEBUG_MODE then print("🟢 " .. generator.Name .. " = HIDUP (attr: " .. attrName .. " = true)") end
+                return "HIDUP"
+            elseif attrValue == false then
+                if DEBUG_MODE then print("🔴 " .. generator.Name .. " = RUSAK (attr: " .. attrName .. " = false)") end
+                return "RUSAK"
+            end
+        end
+        
+        -- Cek broken status
+        if attrNameLower:find("broken") or attrNameLower:find("damage") then
+            if attrValue == true then
+                if DEBUG_MODE then print("🔴 " .. generator.Name .. " = RUSAK (attr: " .. attrName .. " = true)") end
+                return "RUSAK"
+            elseif attrValue == false then
+                if DEBUG_MODE then print("🟢 " .. generator.Name .. " = HIDUP (attr: " .. attrName .. " = false)") end
+                return "HIDUP"
+            end
+        end
+        
+        -- Cek progress (number)
+        if attrNameLower:find("progress") and type(attrValue) == "number" then
+            if attrValue >= 100 then
+                if DEBUG_MODE then print("🟢 " .. generator.Name .. " = HIDUP (progress: 100%)") end
+                return "HIDUP"
+            elseif attrValue > 0 then
+                if DEBUG_MODE then print("🟡 " .. generator.Name .. " = PROGRESS (" .. attrValue .. "%)") end
+                return "PROGRESS", attrValue
+            else
+                if DEBUG_MODE then print("🔴 " .. generator.Name .. " = RUSAK (progress: 0%)") end
+                return "RUSAK"
+            end
+        end
+    end
+    
+    -- Metode 3: Cek ALL descendants (BoolValue, NumberValue, etc)
+    for _, descendant in pairs(generator:GetDescendants()) do
+        local descName = descendant.Name:lower()
+        
+        -- BoolValue
+        if descendant:IsA("BoolValue") then
+            if descName:find("repair") or descName:find("fix") or descName:find("active") or descName:find("power") then
+                if descendant.Value == true then
+                    if DEBUG_MODE then print("🟢 " .. generator.Name .. " = HIDUP (" .. descendant.Name .. " = true)") end
+                    return "HIDUP"
+                else
+                    if DEBUG_MODE then print("🔴 " .. generator.Name .. " = RUSAK (" .. descendant.Name .. " = false)") end
+                    return "RUSAK"
+                end
+            end
+            
+            if descName:find("broken") or descName:find("damage") then
+                if descendant.Value == true then
+                    if DEBUG_MODE then print("🔴 " .. generator.Name .. " = RUSAK (" .. descendant.Name .. " = true)") end
+                    return "RUSAK"
+                else
+                    if DEBUG_MODE then print("🟢 " .. generator.Name .. " = HIDUP (" .. descendant.Name .. " = false)") end
+                    return "HIDUP"
+                end
+            end
+        end
+        
+        -- NumberValue/IntValue (Progress)
+        if descendant:IsA("NumberValue") or descendant:IsA("IntValue") then
+            if descName:find("progress") then
+                if descendant.Value >= 100 then
+                    if DEBUG_MODE then print("🟢 " .. generator.Name .. " = HIDUP (progress: 100%)") end
+                    return "HIDUP"
+                elseif descendant.Value > 0 then
+                    if DEBUG_MODE then print("🟡 " .. generator.Name .. " = PROGRESS (" .. descendant.Value .. "%)") end
+                    return "PROGRESS", descendant.Value
+                else
+                    if DEBUG_MODE then print("🔴 " .. generator.Name .. " = RUSAK (progress: 0%)") end
+                    return "RUSAK"
+                end
+            end
+        end
+        
+        -- Light (lampu nyala = hidup)
+        if descendant:IsA("Light") or descendant:IsA("PointLight") or descendant:IsA("SpotLight") or descendant:IsA("SurfaceLight") then
+            if descendant.Enabled then
+                if DEBUG_MODE then print("🟢 " .. generator.Name .. " = HIDUP (light enabled)") end
+                return "HIDUP"
+            end
+        end
+        
+        -- ParticleEmitter (asap/api = rusak atau hidup tergantung game)
+        if descendant:IsA("ParticleEmitter") then
+            if descendant.Enabled then
+                -- Biasanya particle = generator hidup, tapi bisa juga asap = rusak
+                -- Cek nama particle
+                if descName:find("smoke") or descName:find("fire") or descName:find("broken") then
+                    if DEBUG_MODE then print("🔴 " .. generator.Name .. " = RUSAK (particle: " .. descendant.Name .. ")") end
+                    return "RUSAK"
+                else
+                    if DEBUG_MODE then print("🟢 " .. generator.Name .. " = HIDUP (particle: " .. descendant.Name .. ")") end
+                    return "HIDUP"
+                end
+            end
+        end
+    end
+    
+    -- Default: RUSAK (karena generator biasanya spawn dalam keadaan rusak)
+    if DEBUG_MODE then print("⚪ " .. generator.Name .. " = RUSAK (default)") end
+    return "RUSAK"
+end
+
+-- Fungsi update ESP
+local function updateESP(generator, esp)
+    local status, progress = checkGeneratorStatus(generator)
+    
+    if status == "HIDUP" then
+        esp.highlight.OutlineColor = COLOR_HIDUP
+        esp.highlight.FillColor = COLOR_HIDUP
+    elseif status == "PROGRESS" then
+        esp.highlight.OutlineColor = COLOR_PROGRESS
+        esp.highlight.FillColor = COLOR_PROGRESS
+    else
+        esp.highlight.OutlineColor = COLOR_RUSAK
+        esp.highlight.FillColor = COLOR_RUSAK
+    end
+end
+
+-- Fungsi untuk scan generators
+local function scanGenerators()
+    local map = workspace:WaitForChild("Map")
+    local scanned = {}
+    
+    print("🔍 Scanning generators dengan DEBUG MODE...")
+    
+    for _, child in pairs(map:GetChildren()) do
+        if isGenerator(child) then
+            if not scanned[child] then
+                createESP(child)
+                scanned[child] = true
+            end
+        end
+    end
+    
+    print("✅ Scan selesai!")
+end
+
+-- Jalankan scan
+scanGenerators()
+
+-- Update loop
+RunService.RenderStepped:Connect(function()
+    for generator, esp in pairs(espObjects) do
+        if generator and generator.Parent then
+            updateESP(generator, esp)
+        else
+            if esp.highlight then esp.highlight:Destroy() end
+            espObjects[generator] = nil
+        end
+    end
+end)
+
+-- Monitor generator baru
+workspace.Map.ChildAdded:Connect(function(child)
+    wait(0.1)
+    if isGenerator(child) then
+        createESP(child)
+    end
+end)
+
+print("✅ ESP Generator aktif! (DEBUG MODE ON)")
+print("🔴 Merah = Rusak/Mati")
+print("🟢 Hijau = Hidup/Diperbaiki")
+print("🟡 Kuning = Sedang diperbaiki")
+print("\n📊 Lihat console (F9) untuk melihat struktur generator!")
