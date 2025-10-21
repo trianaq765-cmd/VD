@@ -1,0 +1,429 @@
+-- ===================================================================
+--                  ESP GENERATOR - INSTANT COLOR UPDATE
+-- Real-time color change saat generator diperbaiki
+-- ===================================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+
+-- ================= KONFIGURASI =================
+local Config = {
+    ExactNames = {
+        -- ISI DENGAN NAMA GENERATOR SETELAH SCAN
+        -- Contoh: "Generator", "Generator_01"
+    },
+    
+    IgnoreNames = {
+        "generatorscript", "generatormanager", "generatorui"
+    },
+    
+    StrictMode = true,
+    DebugMode = true,  -- Print setiap perubahan status
+    
+    -- Colors
+    IncompleteColor = Color3.fromRGB(255, 50, 50),
+    CompleteColor = Color3.fromRGB(50, 255, 50),
+    
+    FillTransparency = 0.5,
+    OutlineTransparency = 0,
+}
+
+-- ================= DATA =================
+local generatorCache = {}
+local processedObjects = {}
+local monitorConnections = {}
+
+-- ================= UTILS =================
+local function log(msg)
+    if Config.DebugMode then
+        print("[GEN ESP] " .. msg)
+    end
+end
+
+-- ================= DETECTION =================
+local function isInBlacklist(name)
+    local nameLower = string.lower(name)
+    for _, blacklisted in ipairs(Config.IgnoreNames) do
+        if nameLower:find(string.lower(blacklisted)) then
+            return true
+        end
+    end
+    return false
+end
+
+local function isExactMatch(name)
+    if #Config.ExactNames == 0 then return false end
+    local nameLower = string.lower(name)
+    for _, exactName in ipairs(Config.ExactNames) do
+        if nameLower == string.lower(exactName) then
+            return true
+        end
+    end
+    return false
+end
+
+local function isGenerator(obj)
+    if not obj then return false end
+    if processedObjects[obj] then return false end
+    if isInBlacklist(obj.Name) then return false end
+    
+    if #Config.ExactNames > 0 then
+        return isExactMatch(obj.Name)
+    end
+    
+    if Config.StrictMode then
+        local nameLower = string.lower(obj.Name)
+        local patterns = {
+            "^generator$", "^generator_%d+$", "^gen_%d+$", "^genset_%d+$",
+        }
+        for _, pattern in ipairs(patterns) do
+            if nameLower:match(pattern) then return true end
+        end
+        return false
+    end
+    
+    local nameLower = string.lower(obj.Name)
+    return nameLower:find("^gen") or nameLower:find("generator")
+end
+
+-- ================= STATUS CHECK (MULTI-METHOD) =================
+local function getGeneratorStatus(gen)
+    local methods = {}
+    
+    -- Method 1: Progress Attribute (0-100)
+    local progress = gen:GetAttribute("Progress")
+    if progress and tonumber(progress) then
+        local num = tonumber(progress)
+        table.insert(methods, {name = "Progress Attr", value = num, status = num >= 100 and "complete" or "incomplete"})
+    end
+    
+    -- Method 2: State Attribute (string)
+    local state = gen:GetAttribute("State")
+    if state then
+        local stateStr = string.lower(tostring(state))
+        local status = "incomplete"
+        if stateStr == "complete" or stateStr == "repaired" or stateStr == "true" or stateStr == "powered" then
+            status = "complete"
+        end
+        table.insert(methods, {name = "State Attr", value = state, status = status})
+    end
+    
+    -- Method 3: Repaired Attribute (boolean)
+    local repaired = gen:GetAttribute("Repaired")
+    if repaired ~= nil then
+        local status = (repaired == true or repaired == "true") and "complete" or "incomplete"
+        table.insert(methods, {name = "Repaired Attr", value = repaired, status = status})
+    end
+    
+    -- Method 4: Fixed Attribute
+    local fixed = gen:GetAttribute("Fixed")
+    if fixed ~= nil then
+        local status = (fixed == true or fixed == "true") and "complete" or "incomplete"
+        table.insert(methods, {name = "Fixed Attr", value = fixed, status = status})
+    end
+    
+    -- Method 5: Progress Value (child object)
+    local progressValue = gen:FindFirstChild("Progress")
+    if progressValue and (progressValue:IsA("NumberValue") or progressValue:IsA("IntValue")) then
+        local num = progressValue.Value
+        table.insert(methods, {name = "Progress Value", value = num, status = num >= 100 and "complete" or "incomplete"})
+    end
+    
+    -- Method 6: Repaired BoolValue
+    local repairedValue = gen:FindFirstChild("Repaired")
+    if repairedValue and repairedValue:IsA("BoolValue") then
+        table.insert(methods, {name = "Repaired Bool", value = repairedValue.Value, status = repairedValue.Value and "complete" or "incomplete"})
+    end
+    
+    -- Method 7: Complete BoolValue
+    local completeValue = gen:FindFirstChild("Complete") or gen:FindFirstChild("Fixed")
+    if completeValue and completeValue:IsA("BoolValue") then
+        table.insert(methods, {name = "Complete Bool", value = completeValue.Value, status = completeValue.Value and "complete" or "incomplete"})
+    end
+    
+    -- Method 8: Part Color
+    if gen:IsA("BasePart") then
+        local color = gen.Color
+        if color.G > 0.7 and color.R < 0.3 then
+            table.insert(methods, {name = "Part Color", value = "Green", status = "complete"})
+        elseif color.R > 0.7 and color.G < 0.3 then
+            table.insert(methods, {name = "Part Color", value = "Red", status = "incomplete"})
+        end
+    end
+    
+    -- Return first valid method found
+    if #methods > 0 then
+        return methods[1].status, methods[1].name, methods[1].value
+    end
+    
+    return "incomplete", "Default", nil
+end
+
+-- ================= HIGHLIGHT =================
+local function updateHighlightColor(gen, status, reason)
+    local data = generatorCache[gen]
+    if not data or not data.highlight or not data.highlight.Parent then return end
+    
+    local newColor = status == "complete" and Config.CompleteColor or Config.IncompleteColor
+    data.highlight.FillColor = newColor
+    
+    if status ~= data.lastStatus then
+        data.lastStatus = status
+        log(string.format("🔄 %s: %s (%s: %s)", gen.Name, status, reason or "unknown", tostring(data.lastMethod)))
+    end
+end
+
+local function createHighlight(gen, status)
+    local target = gen:IsA("Model") and gen or gen
+    
+    local hl = target:FindFirstChild("GenHL")
+    if hl then hl:Destroy() end
+    
+    hl = Instance.new("Highlight")
+    hl.Name = "GenHL"
+    hl.Adornee = target
+    hl.FillColor = status == "complete" and Config.CompleteColor or Config.IncompleteColor
+    hl.OutlineColor = Color3.new(1, 1, 1)
+    hl.FillTransparency = Config.FillTransparency
+    hl.OutlineTransparency = Config.OutlineTransparency
+    hl.Parent = target
+    
+    return hl
+end
+
+-- ================= MONITORING =================
+local function setupMonitoring(gen)
+    local connections = {}
+    
+    -- Monitor attribute changes
+    local attrConn = gen.AttributeChanged:Connect(function(attr)
+        task.spawn(function()
+            local status, method, value = getGeneratorStatus(gen)
+            updateHighlightColor(gen, status, method)
+        end)
+    end)
+    table.insert(connections, attrConn)
+    
+    -- Monitor children changes (untuk Values)
+    local childAddedConn = gen.ChildAdded:Connect(function(child)
+        if child:IsA("ValueBase") then
+            task.wait(0.05)
+            local status, method, value = getGeneratorStatus(gen)
+            updateHighlightColor(gen, status, method)
+            
+            -- Monitor value changes
+            if child:IsA("NumberValue") or child:IsA("IntValue") or child:IsA("BoolValue") then
+                local valueConn = child.Changed:Connect(function()
+                    local status, method, value = getGeneratorStatus(gen)
+                    updateHighlightColor(gen, status, method)
+                end)
+                table.insert(connections, valueConn)
+            end
+        end
+    end)
+    table.insert(connections, childAddedConn)
+    
+    -- Monitor existing values
+    for _, child in ipairs(gen:GetChildren()) do
+        if child:IsA("NumberValue") or child:IsA("IntValue") or child:IsA("BoolValue") then
+            local valueConn = child.Changed:Connect(function()
+                local status, method, value = getGeneratorStatus(gen)
+                updateHighlightColor(gen, status, method)
+            end)
+            table.insert(connections, valueConn)
+        end
+    end
+    
+    -- Monitor part color changes (jika generator adalah part)
+    if gen:IsA("BasePart") then
+        local colorConn = gen:GetPropertyChangedSignal("Color"):Connect(function()
+            local status, method, value = getGeneratorStatus(gen)
+            updateHighlightColor(gen, status, method)
+        end)
+        table.insert(connections, colorConn)
+    end
+    
+    monitorConnections[gen] = connections
+end
+
+local function cleanupMonitoring(gen)
+    if monitorConnections[gen] then
+        for _, conn in ipairs(monitorConnections[gen]) do
+            conn:Disconnect()
+        end
+        monitorConnections[gen] = nil
+    end
+end
+
+-- ================= SCAN =================
+local function scanGenerators()
+    print("\n🔍 Scanning for generators...")
+    
+    local found = {}
+    local scanned = 0
+    
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        scanned = scanned + 1
+        if isGenerator(obj) then
+            table.insert(found, obj)
+            processedObjects[obj] = true
+        end
+        
+        if obj:IsA("Folder") or obj:IsA("Model") then
+            for _, child in ipairs(obj:GetChildren()) do
+                scanned = scanned + 1
+                if isGenerator(child) then
+                    table.insert(found, child)
+                    processedObjects[child] = true
+                end
+            end
+        end
+    end
+    
+    print(string.format("✅ Scanned %d objects, found %d generators\n", scanned, #found))
+    
+    if #found > 0 then
+        print("📋 FOUND GENERATORS:")
+        for i, gen in ipairs(found) do
+            local status, method, value = getGeneratorStatus(gen)
+            print(string.format("  %d. %s (%s) - %s via %s", i, gen.Name, gen.ClassName, status, method))
+        end
+        
+        if #Config.ExactNames == 0 then
+            print("\n💡 Add to Config.ExactNames:")
+            print('ExactNames = {')
+            local added = {}
+            for _, gen in ipairs(found) do
+                if not added[gen.Name] then
+                    print(string.format('    "%s",', gen.Name))
+                    added[gen.Name] = true
+                end
+            end
+            print('}\n')
+        end
+    else
+        print("⚠️  No generators found")
+        print("💡 Try: StrictMode = false\n")
+    end
+    
+    return found
+end
+
+-- ================= APPLY ESP =================
+local function applyESP(gen)
+    local status, method, value = getGeneratorStatus(gen)
+    local highlight = createHighlight(gen, status)
+    
+    generatorCache[gen] = {
+        highlight = highlight,
+        lastStatus = status,
+        lastMethod = value,
+        object = gen
+    }
+    
+    -- Setup monitoring untuk real-time updates
+    setupMonitoring(gen)
+    
+    log(string.format("✅ ESP applied: %s - %s (detected via %s)", gen.Name, status, method))
+end
+
+-- ================= PERIODIC UPDATE (BACKUP) =================
+local function periodicUpdate()
+    for gen, data in pairs(generatorCache) do
+        if gen and gen.Parent then
+            local status, method, value = getGeneratorStatus(gen)
+            updateHighlightColor(gen, status, method)
+        else
+            if data.highlight then
+                pcall(function() data.highlight:Destroy() end)
+            end
+            cleanupMonitoring(gen)
+            generatorCache[gen] = nil
+        end
+    end
+end
+
+-- ================= CLEANUP =================
+local function cleanupAll()
+    for gen, data in pairs(generatorCache) do
+        if data.highlight then
+            pcall(function() data.highlight:Destroy() end)
+        end
+        cleanupMonitoring(gen)
+    end
+    generatorCache = {}
+    log("🧹 ESP cleaned up")
+end
+
+-- ================= INIT =================
+print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🚀 ESP GENERATOR - INSTANT UPDATE MODE")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("⚙️  Strict Mode: " .. (Config.StrictMode and "ON" or "OFF"))
+print("🔄 Real-time monitoring: ACTIVE")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+local foundGenerators = scanGenerators()
+
+for _, gen in ipairs(foundGenerators) do
+    applyESP(gen)
+end
+
+local espCount = 0
+for _ in pairs(generatorCache) do espCount = espCount + 1 end
+
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print(string.format("✅ ESP applied to %d generators", espCount))
+print("🔴 Red = Incomplete")
+print("🟢 Green = Complete")
+print("⚡ Instant color update on change")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+if espCount > 0 then
+    -- Backup periodic check (setiap 1 detik)
+    task.spawn(function()
+        while task.wait(1) do
+            pcall(periodicUpdate)
+        end
+    end)
+    
+    -- Status report
+    task.spawn(function()
+        while task.wait(15) do
+            local complete = 0
+            local incomplete = 0
+            for gen, data in pairs(generatorCache) do
+                if data.lastStatus == "complete" then
+                    complete = complete + 1
+                else
+                    incomplete = incomplete + 1
+                end
+            end
+            log(string.format("📊 Status: %d complete | %d incomplete", complete, incomplete))
+        end
+    end)
+    
+    -- Cleanup
+    Players.PlayerRemoving:Connect(function(player)
+        if player == LocalPlayer then
+            cleanupAll()
+        end
+    end)
+    
+    pcall(function()
+        game.StarterGui:SetCore("SendNotification", {
+            Title = "✅ ESP Generator Active",
+            Text = espCount .. " generators (Real-time)",
+            Duration = 4,
+        })
+    end)
+    
+    log("⚡ Monitoring active - colors update instantly!")
+else
+    print("💡 TROUBLESHOOTING:")
+    print("   1. Set StrictMode = false")
+    print("   2. Fill ExactNames with generator names")
+    print("   3. Wait for game to load generators\n")
+end
