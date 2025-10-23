@@ -1,0 +1,575 @@
+-- ============================================
+-- VIOLENCE DISTRICT - KILLER DETECTOR
+-- Auto-detect Killer Role + ESP
+-- Auto-rescan setiap round restart
+-- Style 3: 👹 ★ KILLER ★ 👹
+-- ============================================
+
+print("=== VIOLENCE DISTRICT - KILLER SCANNER ===")
+print("")
+
+-- Wait for game load
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+wait(2)
+
+local Players = game:GetService("Players")
+local Teams = game:GetService("Teams")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local activeKillers = {}
+local isScanning = false
+local detectionCache = {}
+local lastKillerCount = 0
+local lastScanTime = 0
+local roundActive = false
+
+-- ============================================
+-- CONFIG
+-- ============================================
+local CONFIG = {
+    ShowDistance = true,
+    MinTextSize = 10,
+    MaxTextSize = 18,
+    ScaleDistance = 100,
+    UpdateRate = 0.2,
+    DebugMode = true,
+    
+    -- Colors
+    ColorKiller = Color3.fromRGB(255, 0, 0),
+    ColorMurderer = Color3.fromRGB(200, 0, 50),
+    ColorTraitor = Color3.fromRGB(255, 50, 0),
+    
+    -- Round detection
+    RoundRestartCooldown = 5,
+    ExpectedKillerCount = 1
+}
+
+-- ============================================
+-- ROLE DISPLAY NAMES (STYLE 3 DEFAULT)
+-- ============================================
+local ROLE_DISPLAY = {
+    ["KILLER"] = "👹 ★ KILLER ★ 👹",
+    ["MURDERER"] = "👹 ★ MURDERER ★ 👹",
+    ["TRAITOR"] = "👹 ★ TRAITOR ★ 👹",
+    ["SLASHER"] = "👹 ★ SLASHER ★ 👹",
+    ["ASSASSIN"] = "👹 ★ ASSASSIN ★ 👹"
+}
+
+-- Alternative styles
+local ALTERNATIVE_STYLES = {
+    style1 = {
+        ["KILLER"] = "👹【K I L L E R】👹",
+        ["MURDERER"] = "👹【M U R D E R E R】👹",
+        ["TRAITOR"] = "👹【T R A I T O R】👹",
+        ["SLASHER"] = "👹【S L A S H E R】👹",
+        ["ASSASSIN"] = "👹【A S S A S S I N】👹"
+    },
+    style2 = {
+        ["KILLER"] = "👹 ━━ KILLER ━━ 👹",
+        ["MURDERER"] = "👹 ━━ MURDERER ━━ 👹",
+        ["TRAITOR"] = "👹 ━━ TRAITOR ━━ 👹",
+        ["SLASHER"] = "👹 ━━ SLASHER ━━ 👹",
+        ["ASSASSIN"] = "👹 ━━ ASSASSIN ━━ 👹"
+    },
+    style3 = {
+        ["KILLER"] = "👹 ★ KILLER ★ 👹",
+        ["MURDERER"] = "👹 ★ MURDERER ★ 👹",
+        ["TRAITOR"] = "👹 ★ TRAITOR ★ 👹",
+        ["SLASHER"] = "👹 ★ SLASHER ★ 👹",
+        ["ASSASSIN"] = "👹 ★ ASSASSIN ★ 👹"
+    },
+    style4 = {
+        ["KILLER"] = "👹『KILLER』👹",
+        ["MURDERER"] = "👹『MURDERER』👹",
+        ["TRAITOR"] = "👹『TRAITOR』👹",
+        ["SLASHER"] = "👹『SLASHER』👹",
+        ["ASSASSIN"] = "👹『ASSASSIN』👹"
+    },
+    style5 = {
+        ["KILLER"] = "👹 ▸ KILLER ◂ 👹",
+        ["MURDERER"] = "👹 ▸ MURDERER ◂ 👹",
+        ["TRAITOR"] = "👹 ▸ TRAITOR ◂ 👹",
+        ["SLASHER"] = "👹 ▸ SLASHER ◂ 👹",
+        ["ASSASSIN"] = "👹 ▸ ASSASSIN ◂ 👹"
+    }
+}
+
+local currentStyle = "style3"  -- Default to Style 3
+
+local function GetRoleDisplay(role)
+    return ROLE_DISPLAY[role] or "👹 ★ KILLER ★ 👹"
+end
+
+local function SetDisplayStyle(style)
+    if ALTERNATIVE_STYLES[style] then
+        ROLE_DISPLAY = ALTERNATIVE_STYLES[style]
+        currentStyle = style
+        print("✅ Display style changed to:", style)
+        return true
+    else
+        print("❌ Invalid style. Available: style1, style2, style3, style4, style5")
+        return false
+    end
+end
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+local function cleanupAllESP()
+    print("🧹 Cleaning up all Killer ESP...")
+    
+    local cleaned = 0
+    for player, esp in pairs(activeKillers) do
+        if esp.highlight and esp.highlight.Parent then
+            esp.highlight:Destroy()
+            cleaned = cleaned + 1
+        end
+        if esp.nameGui and esp.nameGui.Parent then
+            esp.nameGui:Destroy()
+        end
+    end
+    
+    activeKillers = {}
+    lastKillerCount = 0
+    roundActive = false
+    
+    print("✅ Cleanup complete! Removed " .. cleaned .. " ESP")
+end
+
+-- ============================================
+-- KILLER VERIFICATION (STRICT)
+-- ============================================
+
+local function IsActualKiller(player)
+    if not player or player == LocalPlayer then
+        return false, nil
+    end
+    
+    local detectedRole = nil
+    
+    -- Method 1: Team Check
+    if player.Team then
+        local teamName = player.Team.Name:lower()
+        
+        if teamName:find("killer") then
+            detectedRole = "KILLER"
+            return true, detectedRole
+        elseif teamName:find("murder") then
+            detectedRole = "MURDERER"
+            return true, detectedRole
+        elseif teamName:find("slasher") then
+            detectedRole = "SLASHER"
+            return true, detectedRole
+        elseif teamName:find("traitor") then
+            detectedRole = "TRAITOR"
+            return true, detectedRole
+        elseif teamName:find("assassin") then
+            detectedRole = "ASSASSIN"
+            return true, detectedRole
+        end
+        
+        if teamName:find("survivor") or teamName:find("innocent") or 
+           teamName:find("player") or teamName:find("civilian") then
+            return false, nil
+        end
+    end
+    
+    -- Method 2: Role Value Check
+    local role = player:FindFirstChild("Role") or 
+                 player:FindFirstChild("PlayerRole") or 
+                 player:FindFirstChild("GameRole")
+    
+    if role and role.Value then
+        local roleValue = tostring(role.Value):lower()
+        
+        if roleValue:find("killer") then
+            detectedRole = "KILLER"
+            return true, detectedRole
+        elseif roleValue:find("murder") then
+            detectedRole = "MURDERER"
+            return true, detectedRole
+        elseif roleValue:find("traitor") then
+            detectedRole = "TRAITOR"
+            return true, detectedRole
+        elseif roleValue:find("slasher") then
+            detectedRole = "SLASHER"
+            return true, detectedRole
+        elseif roleValue:find("assassin") then
+            detectedRole = "ASSASSIN"
+            return true, detectedRole
+        end
+        
+        if roleValue:find("survivor") or roleValue:find("innocent") then
+            return false, nil
+        end
+    end
+    
+    -- Method 3: Check player values
+    for _, value in pairs(player:GetChildren()) do
+        if value:IsA("StringValue") or value:IsA("ObjectValue") or value:IsA("BoolValue") then
+            local valueName = value.Name:lower()
+            
+            if valueName:find("role") or valueName == "killer" or 
+               valueName == "iskiller" or valueName == "murderer" then
+                if value.Value then
+                    local val = tostring(value.Value):lower()
+                    
+                    if val:find("killer") then
+                        detectedRole = "KILLER"
+                        return true, detectedRole
+                    elseif val:find("murder") then
+                        detectedRole = "MURDERER"
+                        return true, detectedRole
+                    elseif val:find("traitor") then
+                        detectedRole = "TRAITOR"
+                        return true, detectedRole
+                    elseif val == "true" and valueName:find("killer") then
+                        detectedRole = "KILLER"
+                        return true, detectedRole
+                    end
+                    
+                    if val:find("survivor") or val:find("innocent") then
+                        return false, nil
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Method 4: Character Attributes
+    if player.Character then
+        local humanoid = player.Character:FindFirstChild("Humanoid")
+        if humanoid then
+            local roleAttr = humanoid:GetAttribute("Role")
+            if roleAttr then
+                local attrLower = tostring(roleAttr):lower()
+                
+                if attrLower:find("killer") then
+                    detectedRole = "KILLER"
+                    return true, detectedRole
+                elseif attrLower:find("murder") then
+                    detectedRole = "MURDERER"
+                    return true, detectedRole
+                elseif attrLower:find("traitor") then
+                    detectedRole = "TRAITOR"
+                    return true, detectedRole
+                end
+            end
+            
+            if humanoid:GetAttribute("IsKiller") == true then
+                detectedRole = "KILLER"
+                return true, detectedRole
+            end
+        end
+        
+        local charRole = player.Character:GetAttribute("Role")
+        if charRole then
+            local charLower = tostring(charRole):lower()
+            if charLower:find("killer") or charLower:find("murder") then
+                detectedRole = "KILLER"
+                return true, detectedRole
+            end
+        end
+    end
+    
+    -- Method 5: Check weapons (with team confirmation)
+    if player.Character then
+        for _, item in pairs(player.Character:GetChildren()) do
+            if item:IsA("Tool") then
+                local toolName = item.Name:lower()
+                if toolName:find("knife") or toolName:find("blade") or 
+                   toolName:find("dagger") or toolName:find("axe") then
+                    if player.Team and player.Team.Name:lower():find("killer") then
+                        detectedRole = "KILLER"
+                        return true, detectedRole
+                    end
+                end
+            end
+        end
+        
+        local backpack = player:FindFirstChild("Backpack")
+        if backpack then
+            for _, item in pairs(backpack:GetChildren()) do
+                if item:IsA("Tool") then
+                    local toolName = item.Name:lower()
+                    if toolName:find("knife") or toolName:find("blade") or 
+                       toolName:find("dagger") or toolName:find("axe") then
+                        if player.Team and player.Team.Name:lower():find("killer") then
+                            detectedRole = "KILLER"
+                            return true, detectedRole
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return false, nil
+end
+
+-- ============================================
+-- CREATE KILLER ESP
+-- ============================================
+
+local function CreateKillerESP(killer, role)
+    task.spawn(function()
+        if not role then
+            role = "KILLER"
+        end
+        
+        if activeKillers[killer] then
+            if CONFIG.DebugMode then
+                print("⚠️ ESP already exists for:", killer.Name)
+            end
+            return
+        end
+        
+        local displayName = GetRoleDisplay(role)
+        print("🎯 Creating ESP - Display:", displayName)
+        
+        local attempts = 0
+        while not killer.Character and attempts < 20 do
+            wait(0.5)
+            attempts = attempts + 1
+        end
+        
+        if not killer.Character then
+            killer.CharacterAdded:Wait()
+            wait(1)
+        end
+        
+        local character = killer.Character
+        if not character then return end
+        
+        local head = character:WaitForChild("Head", 10)
+        local humanoidRootPart = character:WaitForChild("HumanoidRootPart", 10)
+        if not head or not humanoidRootPart then return end
+        
+        wait(0.3)
+        
+        -- === HIGHLIGHT ===
+        for _, child in pairs(character:GetChildren()) do
+            if child.Name == "KillerHighlight" then
+                child:Destroy()
+            end
+        end
+        
+        wait(0.1)
+        
+        local color = CONFIG.ColorKiller
+        if role == "MURDERER" then
+            color = CONFIG.ColorMurderer
+        elseif role == "TRAITOR" then
+            color = CONFIG.ColorTraitor
+        end
+        
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "KillerHighlight"
+        highlight.Adornee = character
+        highlight.FillColor = color
+        highlight.FillTransparency = 0.4
+        highlight.OutlineColor = color
+        highlight.OutlineTransparency = 0
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Enabled = true
+        highlight.Parent = character
+        
+        print("  ✅ Highlight Created")
+        
+        -- === TEXT DISPLAY ===
+        for _, child in pairs(head:GetChildren()) do
+            if child.Name == "KillerRole" then
+                child:Destroy()
+            end
+        end
+        
+        wait(0.1)
+        
+        local roleGui = Instance.new("BillboardGui")
+        roleGui.Name = "KillerRole"
+        roleGui.Adornee = head
+        roleGui.AlwaysOnTop = true
+        roleGui.Size = UDim2.new(0, 230, 0, 65)
+        roleGui.StudsOffset = Vector3.new(0, 2.5, 0)
+        roleGui.MaxDistance = math.huge
+        roleGui.LightInfluence = 0
+        roleGui.ResetOnSpawn = false
+        roleGui.Parent = head
+        
+        local container = Instance.new("Frame")
+        container.Size = UDim2.new(1, 0, 1, 0)
+        container.BackgroundTransparency = 1
+        container.BorderSizePixel = 0
+        container.Parent = roleGui
+        
+        local listLayout = Instance.new("UIListLayout")
+        listLayout.FillDirection = Enum.FillDirection.Vertical
+        listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        listLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+        listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        listLayout.Padding = UDim.new(0, 2)
+        listLayout.Parent = container
+        
+        -- Role Label
+        local roleLabel = Instance.new("TextLabel")
+        roleLabel.Name = "Role"
+        roleLabel.Size = UDim2.new(1, 0, 0.5, 0)
+        roleLabel.BackgroundTransparency = 1
+        roleLabel.Text = displayName
+        roleLabel.TextColor3 = color
+        roleLabel.TextStrokeTransparency = 0
+        roleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        roleLabel.TextSize = CONFIG.MaxTextSize
+        roleLabel.Font = Enum.Font.GothamBold
+        roleLabel.TextScaled = false
+        roleLabel.LayoutOrder = 1
+        roleLabel.Parent = container
+        
+        -- Distance Label
+        local distanceLabel = Instance.new("TextLabel")
+        distanceLabel.Name = "Distance"
+        distanceLabel.Size = UDim2.new(1, 0, 0.3, 0)
+        distanceLabel.BackgroundTransparency = 1
+        distanceLabel.Text = "0m"
+        distanceLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        distanceLabel.TextStrokeTransparency = 0
+        distanceLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        distanceLabel.TextSize = CONFIG.MaxTextSize - 4
+        distanceLabel.Font = Enum.Font.Gotham
+        distanceLabel.TextScaled = false
+        distanceLabel.LayoutOrder = 2
+        distanceLabel.Visible = CONFIG.ShowDistance
+        distanceLabel.Parent = container
+        
+        print("  ✅ Text Created:", displayName)
+        
+        activeKillers[killer] = {
+            highlight = highlight,
+            nameGui = roleGui,
+            roleLabel = roleLabel,
+            distanceLabel = distanceLabel,
+            role = role,
+            displayName = displayName,
+            color = color,
+            lastDistance = 0,
+            lastDisplayDistance = 0,
+            lastTextSize = CONFIG.MaxTextSize,
+            lastUpdateTime = 0
+        }
+        
+        -- === UPDATE SYSTEM ===
+        local updateConnection
+        
+        local function updateESP()
+            local currentTime = tick()
+            if currentTime - activeKillers[killer].lastUpdateTime < CONFIG.UpdateRate then
+                return
+            end
+            activeKillers[killer].lastUpdateTime = currentTime
+            
+            if not roleGui or not roleGui.Parent then
+                if updateConnection then
+                    updateConnection:Disconnect()
+                end
+                return
+            end
+            
+            local localChar = LocalPlayer.Character
+            if not localChar then return end
+            
+            local playerRoot = localChar:FindFirstChild("HumanoidRootPart")
+            
+            if playerRoot and humanoidRootPart and humanoidRootPart.Parent then
+                local distance = (playerRoot.Position - humanoidRootPart.Position).Magnitude
+                
+                local smoothFactor = 0.7
+                local smoothDistance = activeKillers[killer].lastDistance + 
+                                     (distance - activeKillers[killer].lastDistance) * smoothFactor
+                activeKillers[killer].lastDistance = smoothDistance
+                
+                local displayDistance = math.floor(smoothDistance)
+                
+                -- Dynamic text size
+                local targetTextSize
+                if displayDistance < 50 then
+                    targetTextSize = CONFIG.MaxTextSize
+                elseif displayDistance < CONFIG.ScaleDistance then
+                    local scaleFactor = (displayDistance - 50) / (CONFIG.ScaleDistance - 50)
+                    targetTextSize = CONFIG.MaxTextSize - ((CONFIG.MaxTextSize - CONFIG.MinTextSize) * scaleFactor)
+                else
+                    local farScale = math.min(1, (displayDistance - CONFIG.ScaleDistance) / 100)
+                    targetTextSize = math.max(CONFIG.MinTextSize, CONFIG.MinTextSize + (2 - 2 * farScale))
+                end
+                
+                targetTextSize = math.floor(targetTextSize + 0.5)
+                
+                if math.abs(targetTextSize - activeKillers[killer].lastTextSize) >= 1 then
+                    activeKillers[killer].lastTextSize = targetTextSize
+                    roleLabel.TextSize = targetTextSize
+                    distanceLabel.TextSize = targetTextSize - 3
+                end
+                
+                -- Color-coded distance
+                local distColor
+                if displayDistance < 20 then
+                    distColor = Color3.fromRGB(255, 0, 0)
+                elseif displayDistance < 40 then
+                    distColor = Color3.fromRGB(255, 100, 0)
+                elseif displayDistance < 70 then
+                    distColor = Color3.fromRGB(255, 200, 0)
+                else
+                    distColor = Color3.fromRGB(200, 200, 200)
+                end
+                
+                distanceLabel.TextColor3 = distColor
+                
+                if math.abs(displayDistance - activeKillers[killer].lastDisplayDistance) >= 2 then
+                    activeKillers[killer].lastDisplayDistance = displayDistance
+                    distanceLabel.Text = displayDistance .. "m"
+                end
+            end
+        end
+        
+        updateConnection = RunService.Heartbeat:Connect(updateESP)
+        
+        roleGui.AncestryChanged:Connect(function()
+            if not roleGui.Parent and updateConnection then
+                updateConnection:Disconnect()
+            end
+        end)
+        
+        highlight.AncestryChanged:Connect(function()
+            if not highlight.Parent then
+                wait(0.5)
+                if killer and killer.Character then
+                    local isKiller, detectedRole = IsActualKiller(killer)
+                    if isKiller then
+                        activeKillers[killer] = nil
+                        CreateKillerESP(killer, detectedRole)
+                    end
+                end
+            end
+        end)
+        
+        print("  ✅✅ ESP Complete")
+    end)
+end
+
+-- ============================================
+-- SCAN ALL KILLERS
+-- ============================================
+
+local function ScanAllKillers()
+    if isScanning then return end
+    isScanning = true
+    
+    print("\n🔍 ===== SCANNING FOR KILLERS =====")
+    
+    local foundKillers = {}
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer the
