@@ -1,481 +1,603 @@
--- ===================================================================
---                  ESP TEAMMATE - COMPACT UI (FIXED)
--- UI lebih kecil, tidak mengganggu gameplay
--- ===================================================================
+-- ============================================
+-- VIOLENCE DISTRICT - SURVIVOR DETECTOR
+-- Auto-detect Survivor Role + ESP
+-- Auto-rescan setiap round restart
+-- ============================================
+
+print("=== VIOLENCE DISTRICT - SURVIVOR SCANNER ===")
+print("")
+
+-- Wait for game load
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+wait(2)
 
 local Players = game:GetService("Players")
+local Teams = game:GetService("Teams")
 local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer
 
--- ================= KONFIGURASI =================
-local Config = {
-    MaxDistance = 500,
-    ShowAllPlayers = true,       -- TRUE = tampilkan semua player kecuali killer
-    ExcludeLocalPlayer = true,
+local LocalPlayer = Players.LocalPlayer
+local activeSurvivors = {}
+local isScanning = false
+local detectionCache = {}
+local lastSurvivorCount = 0
+local lastScanTime = 0
+local roundActive = false
+
+-- ============================================
+-- CONFIG
+-- ============================================
+local CONFIG = {
+    ShowSelfESP = false,           -- Show ESP on yourself
+    ShowDistance = true,           -- Show distance to survivors
+    MinTextSize = 10,
+    MaxTextSize = 16,
+    ScaleDistance = 100,
+    UpdateRate = 0.2,
+    DebugMode = true,
     
-    -- UI Settings
-    ShowUsername = true,
-    ShowStatusIcon = true,
-    ShowStatusText = false,      -- Dimatikan untuk UI lebih simple
-    ShowDistance = true,
+    -- Colors
+    ColorSurvivor = Color3.fromRGB(0, 150, 255),  -- Blue
+    ColorSelf = Color3.fromRGB(255, 255, 0),      -- Yellow (if ShowSelfESP)
     
-    -- Ukuran UI (lebih kecil)
-    BillboardWidth = 100,
-    BillboardHeight = 40,
-    IconSize = 12,               -- Emoji lebih kecil
-    NameSize = 9,                -- Nama lebih kecil
-    StatusSize = 8,
-    DistanceSize = 8,            -- Jarak lebih kecil
-    StudsOffsetY = 2,
-    
-    KillerNames = {
-        "killer", "murderer", "slasher", "hidden", 
-        "stalker", "masked", "abysswalker"
-    },
-    
-    HighlightEnabled = true,
-    DebugMode = true,            -- ON untuk cek apakah terdetect
-    
-    -- Warna
-    HealthyColor = Color3.fromRGB(100, 255, 100),
-    InjuredColor = Color3.fromRGB(255, 200, 50),
-    DownedColor = Color3.fromRGB(255, 50, 50),
-    DefaultColor = Color3.fromRGB(100, 150, 255),
-    
-    HighlightTransparency = 0.7,
+    -- Round detection
+    RoundRestartCooldown = 5,
+    MinSurvivorsBeforeCleanup = 2
 }
 
--- ================= DATA =================
-local teammateESP = {}
+-- ============================================
+-- CLEANUP
+-- ============================================
 
--- ================= FUNGSI BANTU =================
-local function getHRP(player)
-    return player and player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-end
-
-local function getHumanoid(player)
-    return player and player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-end
-
-local function getDistance(pos1, pos2)
-    return (pos1 - pos2).Magnitude
-end
-
-local function debugPrint(message)
-    if Config.DebugMode then
-        print("[ESP] " .. message)
-    end
-end
-
--- ================= DETEKSI KILLER =================
-local function isKiller(player)
-    if not player then return false end
+local function cleanupAllESP()
+    print("🧹 Cleaning up all Survivor ESP...")
     
-    local name = string.lower(player.Name)
-    for _, killerName in ipairs(Config.KillerNames) do
-        if name:find(killerName) then
-            debugPrint(player.Name .. " = KILLER")
-            return true
+    local cleaned = 0
+    for player, esp in pairs(activeSurvivors) do
+        if esp.highlight and esp.highlight.Parent then
+            esp.highlight:Destroy()
+            cleaned = cleaned + 1
+        end
+        if esp.nameGui and esp.nameGui.Parent then
+            esp.nameGui:Destroy()
         end
     end
     
-    local displayName = string.lower(player.DisplayName or "")
-    for _, killerName in ipairs(Config.KillerNames) do
-        if displayName:find(killerName) then
-            debugPrint(player.Name .. " = KILLER (display name)")
-            return true
-        end
-    end
+    activeSurvivors = {}
+    lastSurvivorCount = 0
+    roundActive = false
     
-    local role = player:GetAttribute("Role") or player:GetAttribute("Team")
-    if role then
-        local roleStr = string.lower(tostring(role))
-        if roleStr:find("killer") or roleStr:find("murderer") or roleStr:find("evil") then
-            debugPrint(player.Name .. " = KILLER (role)")
-            return true
-        end
-    end
-    
-    return false
+    print("✅ Cleanup complete! Removed " .. cleaned .. " ESP")
 end
 
--- ================= DETEKSI TEAMMATE =================
-local function isTeammate(player)
-    if not player then return false end
-    if player == LocalPlayer and Config.ExcludeLocalPlayer then return false end
-    
-    if isKiller(player) then return false end
-    
-    if Config.ShowAllPlayers then
-        debugPrint(player.Name .. " = TEAMMATE (ShowAllPlayers mode)")
-        return true
+-- ============================================
+-- SURVIVOR VERIFICATION
+-- ============================================
+
+local function IsActualSurvivor(player)
+    if not player or player == LocalPlayer then
+        return false, nil
     end
     
-    if LocalPlayer.Team and player.Team then
-        if LocalPlayer.Team == player.Team then
-            debugPrint(player.Name .. " = TEAMMATE (same team)")
-            return true
-        end
-    end
+    local detectedRole = nil
     
-    if LocalPlayer.TeamColor and player.TeamColor then
-        if LocalPlayer.TeamColor == player.TeamColor then
-            debugPrint(player.Name .. " = TEAMMATE (same team color)")
-            return true
-        end
-    end
-    
-    local myRole = LocalPlayer:GetAttribute("Role") or LocalPlayer:GetAttribute("Team")
-    local theirRole = player:GetAttribute("Role") or player:GetAttribute("Team")
-    
-    if myRole and theirRole then
-        local myRoleStr = string.lower(tostring(myRole))
-        local theirRoleStr = string.lower(tostring(theirRole))
+    -- Method 1: Team Check
+    if player.Team then
+        local teamName = player.Team.Name:lower()
         
-        if myRoleStr == theirRoleStr then
-            debugPrint(player.Name .. " = TEAMMATE (same role)")
-            return true
+        if teamName:find("survivor") then
+            detectedRole = "SURVIVOR"
+            return true, detectedRole
+        elseif teamName:find("survival") then
+            detectedRole = "SURVIVAL"
+            return true, detectedRole
+        elseif teamName:find("survi") then
+            detectedRole = "SURVI"
+            return true, detectedRole
+        elseif teamName:find("innocent") then
+            detectedRole = "INNOCENT"
+            return true, detectedRole
+        elseif teamName:find("player") then
+            detectedRole = "PLAYER"
+            return true, detectedRole
         end
         
-        if myRoleStr:find("survivor") and theirRoleStr:find("survivor") then
-            debugPrint(player.Name .. " = TEAMMATE (both survivors)")
-            return true
+        -- Exclude killer/murderer teams
+        if teamName:find("killer") or teamName:find("murder") or 
+           teamName:find("traitor") or teamName:find("slasher") then
+            return false, nil
         end
     end
     
-    if not LocalPlayer.Team and not LocalPlayer:GetAttribute("Role") then
-        debugPrint(player.Name .. " = TEAMMATE (no team system)")
-        return true
-    end
+    -- Method 2: Role Value Check
+    local role = player:FindFirstChild("Role") or 
+                 player:FindFirstChild("PlayerRole") or 
+                 player:FindFirstChild("GameRole")
     
-    return false
-end
-
--- ================= DETEKSI STATUS =================
-local function getPlayerStatus(player)
-    local humanoid = getHumanoid(player)
-    if not humanoid then return "Unknown", Config.DefaultColor, "●" end
-    
-    local healthPercent = (humanoid.Health / humanoid.MaxHealth) * 100
-    
-    local state = player:GetAttribute("State") or player:GetAttribute("PlayerState")
-    if state then
-        local stateStr = string.lower(tostring(state))
+    if role and role.Value then
+        local roleValue = tostring(role.Value):lower()
         
-        if stateStr:find("down") or stateStr:find("dying") then
-            return "Down", Config.DownedColor, "●"
-        elseif stateStr:find("injured") or stateStr:find("hurt") then
-            return "Hurt", Config.InjuredColor, "●"
-        elseif stateStr:find("healthy") then
-            return "OK", Config.HealthyColor, "●"
-        elseif stateStr:find("hooked") then
-            return "Hook", Config.DownedColor, "●"
+        if roleValue:find("survivor") then
+            detectedRole = "SURVIVOR"
+            return true, detectedRole
+        elseif roleValue:find("survival") then
+            detectedRole = "SURVIVAL"
+            return true, detectedRole
+        elseif roleValue:find("innocent") then
+            detectedRole = "INNOCENT"
+            return true, detectedRole
+        end
+        
+        -- Exclude killer roles
+        if roleValue:find("killer") or roleValue:find("murder") then
+            return false, nil
         end
     end
     
+    -- Method 3: Check all player values
+    for _, value in pairs(player:GetChildren()) do
+        if value:IsA("StringValue") or value:IsA("ObjectValue") or value:IsA("BoolValue") then
+            local valueName = value.Name:lower()
+            
+            if valueName:find("role") or valueName == "survivor" or valueName == "issurvivor" then
+                if value.Value then
+                    local val = tostring(value.Value):lower()
+                    
+                    if val:find("survivor") then
+                        detectedRole = "SURVIVOR"
+                        return true, detectedRole
+                    elseif val:find("survival") then
+                        detectedRole = "SURVIVAL"
+                        return true, detectedRole
+                    elseif val:find("innocent") then
+                        detectedRole = "INNOCENT"
+                        return true, detectedRole
+                    end
+                    
+                    -- Exclude killers
+                    if val:find("killer") or val:find("murder") then
+                        return false, nil
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Method 4: Character Attributes
     if player.Character then
-        local downedTag = player.Character:FindFirstChild("Downed")
-        if downedTag and downedTag:IsA("BoolValue") and downedTag.Value then
-            return "Down", Config.DownedColor, "●"
+        local humanoid = player.Character:FindFirstChild("Humanoid")
+        if humanoid then
+            local roleAttr = humanoid:GetAttribute("Role")
+            if roleAttr then
+                local attrLower = tostring(roleAttr):lower()
+                
+                if attrLower:find("survivor") then
+                    detectedRole = "SURVIVOR"
+                    return true, detectedRole
+                elseif attrLower:find("survival") then
+                    detectedRole = "SURVIVAL"
+                    return true, detectedRole
+                elseif attrLower:find("innocent") then
+                    detectedRole = "INNOCENT"
+                    return true, detectedRole
+                end
+            end
+            
+            if humanoid:GetAttribute("IsSurvivor") == true then
+                detectedRole = "SURVIVOR"
+                return true, detectedRole
+            end
         end
         
-        local injuredTag = player.Character:FindFirstChild("Injured")
-        if injuredTag and injuredTag:IsA("BoolValue") and injuredTag.Value then
-            return "Hurt", Config.InjuredColor, "●"
+        local charRole = player.Character:GetAttribute("Role")
+        if charRole then
+            local charLower = tostring(charRole):lower()
+            if charLower:find("survivor") or charLower:find("survival") then
+                detectedRole = "SURVIVOR"
+                return true, detectedRole
+            end
         end
     end
     
-    if healthPercent < 30 then
-        return "Low", Config.DownedColor, "●"
-    elseif healthPercent < 70 then
-        return "Hurt", Config.InjuredColor, "●"
-    else
-        return "OK", Config.HealthyColor, "●"
-    end
+    return false, nil
 end
 
--- ================= ESP IMPLEMENTATION =================
-local function createHighlight(player)
-    if not player.Character then return nil end
-    
-    -- Hapus highlight lama jika ada
-    local oldHighlight = player.Character:FindFirstChild("Teammate_Highlight")
-    if oldHighlight then
-        oldHighlight:Destroy()
-    end
-    
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "Teammate_Highlight"
-    highlight.Adornee = player.Character
-    highlight.FillColor = Config.DefaultColor
-    highlight.OutlineColor = Color3.new(1, 1, 1)
-    highlight.FillTransparency = Config.HighlightTransparency
-    highlight.OutlineTransparency = 0.5
-    highlight.Parent = player.Character
-    
-    debugPrint("Created highlight for " .. player.Name)
-    return highlight
-end
+-- ============================================
+-- CREATE SURVIVOR ESP
+-- ============================================
 
-local function createBillboard(player)
-    local hrp = getHRP(player)
-    if not hrp then 
-        debugPrint("Failed to get HRP for " .. player.Name)
-        return nil 
-    end
-    
-    -- Hapus billboard lama jika ada
-    local oldBB = hrp:FindFirstChild("Teammate_Billboard")
-    if oldBB then
-        oldBB:Destroy()
-    end
-    
-    local bb = Instance.new("BillboardGui")
-    bb.Name = "Teammate_Billboard"
-    bb.Size = UDim2.new(0, Config.BillboardWidth, 0, Config.BillboardHeight)
-    bb.StudsOffset = Vector3.new(0, Config.StudsOffsetY, 0)
-    bb.AlwaysOnTop = true
-    bb.MaxDistance = Config.MaxDistance
-    bb.Parent = hrp
-    
-    local container = Instance.new("Frame", bb)
-    container.Name = "Container"
-    container.BackgroundTransparency = 1
-    container.Size = UDim2.new(1, 0, 1, 0)
-    
-    -- Layout sederhana: Icon -> Nama -> Jarak (vertikal)
-    local yPos = 0
-    local itemHeight = 1 / 3
-    
-    -- Status Icon
-    if Config.ShowStatusIcon then
-        local icon = Instance.new("TextLabel", container)
-        icon.Name = "Icon"
-        icon.BackgroundTransparency = 1
-        icon.Size = UDim2.new(1, 0, itemHeight, 0)
-        icon.Position = UDim2.new(0, 0, yPos, 0)
-        icon.Font = Enum.Font.GothamBold
-        icon.TextSize = Config.IconSize
-        icon.TextColor3 = Config.HealthyColor
-        icon.TextXAlignment = Enum.TextXAlignment.Center
-        icon.TextYAlignment = Enum.TextYAlignment.Center
-        icon.Text = "●"
-        yPos = yPos + itemHeight
-    end
-    
-    -- Username
-    if Config.ShowUsername then
-        local nameLabel = Instance.new("TextLabel", container)
-        nameLabel.Name = "Username"
-        nameLabel.BackgroundTransparency = 1
-        nameLabel.Size = UDim2.new(1, 0, itemHeight, 0)
-        nameLabel.Position = UDim2.new(0, 0, yPos, 0)
-        nameLabel.Font = Enum.Font.GothamBold
-        nameLabel.TextSize = Config.NameSize
-        nameLabel.TextColor3 = Color3.new(1, 1, 1)
-        nameLabel.TextXAlignment = Enum.TextXAlignment.Center
-        nameLabel.TextYAlignment = Enum.TextYAlignment.Center
-        nameLabel.Text = player.Name
-        yPos = yPos + itemHeight
-    end
-    
-    -- Distance
-    if Config.ShowDistance then
-        local distLabel = Instance.new("TextLabel", container)
-        distLabel.Name = "Distance"
-        distLabel.BackgroundTransparency = 1
-        distLabel.Size = UDim2.new(1, 0, itemHeight, 0)
-        distLabel.Position = UDim2.new(0, 0, yPos, 0)
-        distLabel.Font = Enum.Font.Gotham
-        distLabel.TextSize = Config.DistanceSize
-        distLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-        distLabel.TextXAlignment = Enum.TextXAlignment.Center
-        distLabel.TextYAlignment = Enum.TextYAlignment.Center
-        distLabel.Text = "0m"
-    end
-    
-    debugPrint("Created billboard for " .. player.Name)
-    return bb
-end
-
-local function applyESP(player)
-    if teammateESP[player] then 
-        debugPrint(player.Name .. " already has ESP")
-        return 
-    end
-    
-    if not isTeammate(player) then 
-        debugPrint(player.Name .. " is not a teammate")
-        return 
-    end
-    
-    if not player.Character then
-        debugPrint(player.Name .. " has no character yet")
-        return
-    end
-    
-    debugPrint("Applying ESP to: " .. player.Name)
-    
-    local highlight = nil
-    if Config.HighlightEnabled then
-        highlight = createHighlight(player)
-    end
-    
-    local billboard = createBillboard(player)
-    
-    if highlight or billboard then
-        teammateESP[player] = {
+local function CreateSurvivorESP(survivor, role)
+    task.spawn(function()
+        if not role then
+            role = "SURVIVOR"
+        end
+        
+        -- Skip if already exists
+        if activeSurvivors[survivor] then
+            if CONFIG.DebugMode then
+                print("⚠️ ESP already exists for:", survivor.Name)
+            end
+            return
+        end
+        
+        print("🎯 Creating ESP for Survivor:", survivor.Name)
+        
+        -- Wait for character
+        local attempts = 0
+        while not survivor.Character and attempts < 20 do
+            wait(0.5)
+            attempts = attempts + 1
+        end
+        
+        if not survivor.Character then
+            survivor.CharacterAdded:Wait()
+            wait(1)
+        end
+        
+        local character = survivor.Character
+        if not character then return end
+        
+        local head = character:WaitForChild("Head", 10)
+        local humanoidRootPart = character:WaitForChild("HumanoidRootPart", 10)
+        if not head or not humanoidRootPart then return end
+        
+        wait(0.3)
+        
+        -- === HIGHLIGHT (Blue Glow) ===
+        for _, child in pairs(character:GetChildren()) do
+            if child.Name == "SurvivorHighlight" then
+                child:Destroy()
+            end
+        end
+        
+        wait(0.1)
+        
+        local color = CONFIG.ColorSurvivor
+        if survivor == LocalPlayer and CONFIG.ShowSelfESP then
+            color = CONFIG.ColorSelf
+        end
+        
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "SurvivorHighlight"
+        highlight.Adornee = character
+        highlight.FillColor = color
+        highlight.FillTransparency = 0.6
+        highlight.OutlineColor = color
+        highlight.OutlineTransparency = 0.2
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Enabled = true
+        highlight.Parent = character
+        
+        print("  ✅ Highlight Created")
+        
+        -- === DYNAMIC TEXT (Role + Distance) ===
+        for _, child in pairs(head:GetChildren()) do
+            if child.Name == "SurvivorRole" then
+                child:Destroy()
+            end
+        end
+        
+        wait(0.1)
+        
+        local roleGui = Instance.new("BillboardGui")
+        roleGui.Name = "SurvivorRole"
+        roleGui.Adornee = head
+        roleGui.AlwaysOnTop = true
+        roleGui.Size = UDim2.new(0, 200, 0, 60)
+        roleGui.StudsOffset = Vector3.new(0, 2.5, 0)
+        roleGui.MaxDistance = math.huge
+        roleGui.LightInfluence = 0
+        roleGui.ResetOnSpawn = false
+        roleGui.Parent = head
+        
+        local container = Instance.new("Frame")
+        container.Size = UDim2.new(1, 0, 1, 0)
+        container.BackgroundTransparency = 1
+        container.BorderSizePixel = 0
+        container.Parent = roleGui
+        
+        local listLayout = Instance.new("UIListLayout")
+        listLayout.FillDirection = Enum.FillDirection.Vertical
+        listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        listLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+        listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        listLayout.Padding = UDim.new(0, 2)
+        listLayout.Parent = container
+        
+        -- Role Label
+        local roleLabel = Instance.new("TextLabel")
+        roleLabel.Name = "Role"
+        roleLabel.Size = UDim2.new(1, 0, 0.5, 0)
+        roleLabel.BackgroundTransparency = 1
+        roleLabel.Text = "👤 " .. role
+        roleLabel.TextColor3 = color
+        roleLabel.TextStrokeTransparency = 0
+        roleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        roleLabel.TextSize = CONFIG.MaxTextSize
+        roleLabel.Font = Enum.Font.GothamBold
+        roleLabel.TextScaled = false
+        roleLabel.LayoutOrder = 1
+        roleLabel.Parent = container
+        
+        -- Distance Label
+        local distanceLabel = Instance.new("TextLabel")
+        distanceLabel.Name = "Distance"
+        distanceLabel.Size = UDim2.new(1, 0, 0.3, 0)
+        distanceLabel.BackgroundTransparency = 1
+        distanceLabel.Text = "0m"
+        distanceLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+        distanceLabel.TextStrokeTransparency = 0
+        distanceLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        distanceLabel.TextSize = CONFIG.MaxTextSize - 4
+        distanceLabel.Font = Enum.Font.Gotham
+        distanceLabel.TextScaled = false
+        distanceLabel.LayoutOrder = 2
+        distanceLabel.Visible = CONFIG.ShowDistance
+        distanceLabel.Parent = container
+        
+        print("  ✅ Text Created")
+        
+        -- Store ESP data
+        activeSurvivors[survivor] = {
             highlight = highlight,
-            billboard = billboard,
-            player = player
+            nameGui = roleGui,
+            roleLabel = roleLabel,
+            distanceLabel = distanceLabel,
+            role = role,
+            lastDistance = 0,
+            lastDisplayDistance = 0,
+            lastTextSize = CONFIG.MaxTextSize,
+            lastUpdateTime = 0
         }
-        debugPrint("✅ ESP applied successfully to: " .. player.Name)
+        
+        -- === SMOOTH UPDATE SYSTEM ===
+        local updateConnection
+        
+        local function updateESP()
+            local currentTime = tick()
+            if currentTime - activeSurvivors[survivor].lastUpdateTime < CONFIG.UpdateRate then
+                return
+            end
+            activeSurvivors[survivor].lastUpdateTime = currentTime
+            
+            if not roleGui or not roleGui.Parent then
+                if updateConnection then
+                    updateConnection:Disconnect()
+                end
+                return
+            end
+            
+            local localChar = LocalPlayer.Character
+            if not localChar then return end
+            
+            local playerRoot = localChar:FindFirstChild("HumanoidRootPart")
+            
+            if playerRoot and humanoidRootPart and humanoidRootPart.Parent then
+                local distance = (playerRoot.Position - humanoidRootPart.Position).Magnitude
+                
+                -- Smooth distance
+                local smoothFactor = 0.7
+                local smoothDistance = activeSurvivors[survivor].lastDistance + 
+                                     (distance - activeSurvivors[survivor].lastDistance) * smoothFactor
+                activeSurvivors[survivor].lastDistance = smoothDistance
+                
+                local displayDistance = math.floor(smoothDistance)
+                
+                -- Dynamic text size
+                local targetTextSize
+                if displayDistance < 50 then
+                    targetTextSize = CONFIG.MaxTextSize
+                elseif displayDistance < CONFIG.ScaleDistance then
+                    local scaleFactor = (displayDistance - 50) / (CONFIG.ScaleDistance - 50)
+                    targetTextSize = CONFIG.MaxTextSize - ((CONFIG.MaxTextSize - CONFIG.MinTextSize) * scaleFactor)
+                else
+                    local farScale = math.min(1, (displayDistance - CONFIG.ScaleDistance) / 100)
+                    targetTextSize = math.max(CONFIG.MinTextSize, CONFIG.MinTextSize + (2 - 2 * farScale))
+                end
+                
+                targetTextSize = math.floor(targetTextSize + 0.5)
+                
+                -- Update text size if changed
+                if math.abs(targetTextSize - activeSurvivors[survivor].lastTextSize) >= 1 then
+                    activeSurvivors[survivor].lastTextSize = targetTextSize
+                    roleLabel.TextSize = targetTextSize
+                    distanceLabel.TextSize = targetTextSize - 3
+                end
+                
+                -- Update distance text
+                if math.abs(displayDistance - activeSurvivors[survivor].lastDisplayDistance) >= 2 then
+                    activeSurvivors[survivor].lastDisplayDistance = displayDistance
+                    distanceLabel.Text = displayDistance .. "m"
+                end
+            end
+        end
+        
+        updateConnection = RunService.Heartbeat:Connect(updateESP)
+        
+        -- Cleanup on destroy
+        roleGui.AncestryChanged:Connect(function()
+            if not roleGui.Parent and updateConnection then
+                updateConnection:Disconnect()
+            end
+        end)
+        
+        -- Auto recreate if destroyed
+        highlight.AncestryChanged:Connect(function()
+            if not highlight.Parent then
+                wait(0.5)
+                if survivor and survivor.Character then
+                    local isSurvivor, detectedRole = IsActualSurvivor(survivor)
+                    if isSurvivor then
+                        activeSurvivors[survivor] = nil
+                        CreateSurvivorESP(survivor, detectedRole)
+                    end
+                end
+            end
+        end)
+        
+        print("  ✅✅ Survivor ESP Complete")
+    end)
+end
+
+-- ============================================
+-- SCAN ALL SURVIVORS
+-- ============================================
+
+local function ScanAllSurvivors()
+    if isScanning then return end
+    isScanning = true
+    
+    print("\n🔍 ===== SCANNING FOR SURVIVORS =====")
+    
+    local foundSurvivors = {}
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer or CONFIG.ShowSelfESP then
+            local isSurvivor, role = IsActualSurvivor(player)
+            
+            if isSurvivor then
+                local cacheKey = player.UserId
+                if not detectionCache[cacheKey] or (tick() - detectionCache[cacheKey]) > 5 then
+                    print("✅ SURVIVOR FOUND:", player.Name, "- Role:", role or "SURVIVOR")
+                    detectionCache[cacheKey] = tick()
+                end
+                
+                table.insert(foundSurvivors, {
+                    player = player,
+                    role = role or "SURVIVOR"
+                })
+            end
+        end
+    end
+    
+    print("")
+    print("📊 Total Survivors:", #foundSurvivors)
+    print("")
+    
+    -- Create ESP for all
+    if #foundSurvivors > 0 then
+        print("🎨 Creating ESP...")
+        for _, data in ipairs(foundSurvivors) do
+            CreateSurvivorESP(data.player, data.role)
+            wait(0.3)
+        end
+    end
+    
+    lastSurvivorCount = #foundSurvivors
+    lastScanTime = tick()
+    roundActive = true
+    
+    print("✅ ===== SCAN COMPLETE =====\n")
+    
+    isScanning = false
+    return foundSurvivors
+end
+
+-- ============================================
+-- ROUND RESTART DETECTION
+-- ============================================
+
+local function CountCurrentSurvivors()
+    local count = 0
+    for _, player in pairs(Players:GetPlayers()) do
+        if IsActualSurvivor(player) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local survivorsGoneTime = 0
+
+local function DetectRoundRestart()
+    local currentCount = CountCurrentSurvivors()
+    
+    -- If all survivors gone
+    if currentCount == 0 and lastSurvivorCount > 0 then
+        if survivorsGoneTime == 0 then
+            survivorsGoneTime = tick()
+        end
+        
+        if tick() - survivorsGoneTime >= CONFIG.RoundRestartCooldown then
+            print("🔄 ROUND ENDED (all survivors gone)")
+            survivorsGoneTime = 0
+            return true
+        end
     else
-        debugPrint("❌ Failed to create ESP for: " .. player.Name)
+        survivorsGoneTime = 0
     end
-end
-
-local function cleanupESP(player)
-    if teammateESP[player] then
-        if teammateESP[player].highlight then
-            pcall(function() teammateESP[player].highlight:Destroy() end)
-        end
-        if teammateESP[player].billboard then
-            pcall(function() teammateESP[player].billboard:Destroy() end)
-        end
-        teammateESP[player] = nil
-        debugPrint("Cleaned up ESP for: " .. player.Name)
-    end
-end
-
--- ================= UPDATE ESP =================
-local function updateESP()
-    local myHRP = getHRP(LocalPlayer)
-    if not myHRP then return end
     
-    for player, elements in pairs(teammateESP) do
-        if player and player.Parent and player.Character then
-            local status, color, icon = getPlayerStatus(player)
+    -- If new survivors appeared
+    if currentCount >= 2 and lastSurvivorCount == 0 then
+        print("🔄 NEW ROUND (survivors spawned)")
+        return true
+    end
+    
+    -- Major change in survivor count
+    if math.abs(currentCount - lastSurvivorCount) >= 3 and lastSurvivorCount > 0 then
+        print("🔄 ROUND CHANGE (survivor count changed significantly)")
+        return true
+    end
+    
+    return false
+end
+
+local function MonitorRoundRestart()
+    task.spawn(function()
+        while true do
+            wait(3)
             
-            -- Update highlight color
-            if elements.highlight and elements.highlight.Parent then
-                elements.highlight.FillColor = color
+            if tick() - lastScanTime < 5 then
+                continue
             end
             
-            -- Update billboard
-            if elements.billboard and elements.billboard.Parent then
-                local container = elements.billboard.Container
+            if DetectRoundRestart() then
+                print("\n🔄 ===== ROUND RESTART DETECTED ===== 🔄")
                 
-                -- Update icon
-                if Config.ShowStatusIcon then
-                    local iconLabel = container:FindFirstChild("Icon")
-                    if iconLabel then
-                        iconLabel.TextColor3 = color
-                    end
-                end
+                cleanupAllESP()
+                wait(2)
+                ScanAllSurvivors()
                 
-                -- Update distance
-                if Config.ShowDistance then
-                    local targetHRP = getHRP(player)
-                    if targetHRP then
-                        local dist = getDistance(myHRP.Position, targetHRP.Position)
-                        
-                        local distLabel = container:FindFirstChild("Distance")
-                        if distLabel then
-                            distLabel.Text = string.format("%.0fm", dist)
-                        end
-                    end
-                end
-            else
-                -- Billboard hilang, recreate
-                debugPrint("Billboard lost for " .. player.Name .. ", recreating...")
-                cleanupESP(player)
-                applyESP(player)
+                print("🔄 ===== RESCAN COMPLETE ===== 🔄\n")
             end
-        else
-            cleanupESP(player)
-        end
-    end
-end
-
--- ================= SETUP PLAYERS =================
-local function setupPlayer(player)
-    if player == LocalPlayer and Config.ExcludeLocalPlayer then 
-        debugPrint("Skipping local player")
-        return 
-    end
-    
-    debugPrint("Setting up player: " .. player.Name)
-    
-    -- Tunggu character load
-    if player.Character then
-        task.wait(0.5)
-        applyESP(player)
-    end
-    
-    player.CharacterAdded:Connect(function(char)
-        debugPrint(player.Name .. " spawned")
-        cleanupESP(player)
-        task.wait(0.5)
-        applyESP(player)
-    end)
-    
-    player.AncestryChanged:Connect(function()
-        if not player:IsDescendantOf(Players) then
-            debugPrint(player.Name .. " left the game")
-            cleanupESP(player)
         end
     end)
 end
 
--- ================= INIT =================
-print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-print("👥 ESP TEAMMATE - COMPACT UI")
-print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-print("🔍 Scanning players...")
+-- ============================================
+-- INITIAL SCAN
+-- ============================================
 
-for _, player in ipairs(Players:GetPlayers()) do
-    setupPlayer(player)
-end
+wait(3)
 
-Players.PlayerAdded:Connect(setupPlayer)
+print("🔍 Starting initial scan...")
+print("")
 
--- Main update loop
-RunService.Heartbeat:Connect(function()
-    updateESP()
-end)
+ScanAllSurvivors()
 
--- Periodic re-apply
-task.spawn(function()
-    while task.wait(5) do
-        debugPrint("━━━ Periodic check ━━━")
-        for _, player in ipairs(Players:GetPlayers()) do
-            if isTeammate(player) and not teammateESP[player] then
-                debugPrint("Re-applying ESP to: " .. player.Name)
-                applyESP(player)
+-- ============================================
+-- REAL-TIME MONITORING
+-- ============================================
+
+print("=== MONITORING ACTIVE ===")
+print("")
+
+-- Monitor team changes
+for _, player in pairs(Players:GetPlayers()) do
+    player:GetPropertyChangedSignal("Team"):Connect(function()
+        if not roundActive then return end
+        
+        local isSurvivor, role = IsActualSurvivor(player)
+        if isSurvivor then
+            print("👤 SURVIVOR DETECTED:", player.Name, "- Role:", role)
+            
+            if not activeSurvivors[player] then
+                wait(1)
+                CreateSurvivorESP(player, role)
             end
         end
-    end
-end)
-
-task.wait(2)
-
-local teammateCount = 0
-for _, player in ipairs(Players:GetPlayers()) do
-    if isTeammate(player) then
-        teammateCount = teammateCount + 1
-    end
-end
-
-print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-print(string.format("✅ %d teammates detected", teammateCount))
-print("📏 UI Size: " .. Config.BillboardWidth .. "x" .. Config.BillboardHeight)
-print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-
-pcall(function()
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "👥 ESP Teammate Active",
-        Text = teammateCount .. " teammates found!",
-        Duration = 3,
-    })
-end)
+    end)
+    
+    player.CharacterAdded:Connect(function()
+        if not roundActive then retur
