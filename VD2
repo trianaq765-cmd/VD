@@ -1,102 +1,561 @@
-local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/jensonhirst/Orion/main/source')))()
-local Window = OrionLib:MakeWindow({Name = "Title of the library", HidePremium = false, SaveConfig = true, ConfigFolder = "OrionTest"})
+-- ============================================
+-- TOING HUB - VIOLENCE DISTRICT
+-- Professional Custom UI with Key System & Avatar
+-- With Key Duration System & Countdown Timer
+-- By Tuwing
+-- FIXED VERSION V7 - Multi-Tier Badge System
+-- ============================================
 
-local Tab = Window:MakeTab({
-	Name = "Survivor",
-	Icon = "rbxassetid://4483345998",
-	PremiumOnly = false
-})
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
 
-local Section = Tab:AddSection({
-	Name = "Fitur"
-})
+local LocalPlayer = Players.LocalPlayer
 
-OrionLib:MakeNotification({
-	Name = "tuwing",
-	Content = "hai memek??",
-	Image = "rbxassetid://4483345998",
-	Time = 3
-})
+-- ============================================
+-- KEY SYSTEM CONFIGURATION
+-- ============================================
 
-Tab:AddButton({
-	Name = "auto generator",
-	Callback = function()
-      		print("button pressed")
-      loadstring(game:HttpGet("https://pastebin.com/raw/y03DDu1K"))()
-  	end    
-})
+local KEY_CONFIG = {
+    VALID_KEYS = {
+        {key = "TOINGHUB2024", duration = 86400, tier = "STANDARD"}, -- 24 hours
+        {key = "VIOLENCE2024", duration = 604800, tier = "PREMIUM"}, -- 7 days
+        {key = "ADMINKEY123", duration = 2592000, tier = "PREMIUM"}, -- 30 days
+        {key = "TESTKEY", duration = 180, tier = "TRIAL"}, -- 3 minutes
+        {key = "LIFETIME", duration = 999999999, tier = "LIFETIME"}, -- Lifetime
+    },
+    DISCORD_LINK = "https://discord.gg/yourdiscord",
+    KEY_LINK = "https://linkvertise.com/yourkey",
+    SAVE_FILE = "ToingHub_KeyData.json"
+}
 
-Tab:AddButton({
-	Name = "auto heal",
-	Callback = function()
-      		print("button pressed")
-      loadstring(game:HttpGet("https://pastebin.com/muxMxpQd"))()
-  	end    
-})
+-- ============================================
+-- TIER CONFIGURATION
+-- ============================================
 
-Tab:AddButton({
-	Name = "speed",
-	Callback = function()
-      		print("button pressed")
-      loadstring(game:HttpGet("https://pastebin.com/raw/tDx7pM8q"))()
-  	end    
-})
+local TIER_CONFIG = {
+    TRIAL = {
+        name = "TRIAL USER",
+        icon = "🆓",
+        badgeText = "⏱️ TRIAL ACCESS",
+        titleText = "MISKIN - PENGANGGURAN",
+        color = Color3.fromRGB(150, 150, 150), -- Silver
+        gradientColor1 = Color3.fromRGB(180, 180, 180),
+        gradientColor2 = Color3.fromRGB(120, 120, 120),
+        glowEffect = false
+    },
+    STANDARD = {
+        name = "STANDARD USER",
+        icon = "⭐",
+        badgeText = "⭐ STANDARD ACCESS ⭐",
+        titleText = "ORANG BIASA",
+        color = Color3.fromRGB(100, 150, 255), -- Blue
+        gradientColor1 = Color3.fromRGB(120, 170, 255),
+        gradientColor2 = Color3.fromRGB(80, 130, 235),
+        glowEffect = false
+    },
+    PREMIUM = {
+        name = "PREMIUM USER",
+        icon = "🔮",
+        badgeText = "🔮 PREMIUM ACCESS 🔮",
+        titleText = "🔮 ORANG KAYA 🔮",
+        color = Color3.fromRGB(138, 43, 226), -- Purple
+        gradientColor1 = Color3.fromRGB(158, 63, 246),
+        gradientColor2 = Color3.fromRGB(118, 23, 206),
+        glowEffect = true
+    },
+    LIFETIME = {
+        name = "VIP USER",
+        icon = "👑",
+        badgeText = "👑 LIFETIME ACCESS 👑",
+        titleText = "👑 SULTAN 👑",
+        color = Color3.fromRGB(255, 215, 0), -- Gold
+        gradientColor1 = Color3.fromRGB(255, 235, 50),
+        gradientColor2 = Color3.fromRGB(235, 195, 0),
+        glowEffect = true
+    }
+}
 
-Tab:AddButton({
-	Name = "hop server",
-	Callback = function()
-      		print("button pressed")
-      loadstring(game:HttpGet("https://pastebin.com/raw/BpUXKL1V"))()
-  	end    
-})
+-- ============================================
+-- KEY DATA FUNCTIONS
+-- ============================================
 
-Tab:AddButton({
-	Name = "teleport to player",
-	Callback = function()
-      		print("button pressed")
-      loadstring(game:HttpGet("https://pastebin.com/raw/4TeHfrgu"))()
-  	end    
-})
+local function SaveKeyData(keyData)
+    local success, err = pcall(function()
+        local jsonData = game:GetService("HttpService"):JSONEncode(keyData)
+        writefile(KEY_CONFIG.SAVE_FILE, jsonData)
+    end)
+    return success
+end
 
+local function LoadKeyData()
+    if isfile(KEY_CONFIG.SAVE_FILE) then
+        local success, result = pcall(function()
+            local jsonData = readfile(KEY_CONFIG.SAVE_FILE)
+            return game:GetService("HttpService"):JSONDecode(jsonData)
+        end)
+        if success then
+            return result
+        end
+    end
+    return nil
+end
 
-local Tab = Window:MakeTab({
-	Name = "VISUAL",
-	Icon = "rbxassetid://4483345998",
-	PremiumOnly = false
-})
+local function DeleteKeyData()
+    if isfile(KEY_CONFIG.SAVE_FILE) then
+        delfile(KEY_CONFIG.SAVE_FILE)
+    end
+end
 
-local Section = Tab:AddSection({
-	Name = "FITUR"
-})
+local function IsKeyValid()
+    local keyData = LoadKeyData()
+    if keyData then
+        local currentTime = os.time()
+        if currentTime <= keyData.expiryTime then
+            return true, keyData.expiryTime - currentTime, keyData.tier
+        else
+            DeleteKeyData()
+            return false, 0, nil
+        end
+    end
+    return false, 0, nil
+end
 
-OrionLib:MakeNotification({
-	Name = "tuwing",
-	Content = "hai memek??",
-	Image = "rbxassetid://4483345998",
-	Time = 3
-})
+local function FormatTime(seconds)
+    local days = math.floor(seconds / 86400)
+    local hours = math.floor((seconds % 86400) / 3600)
+    local minutes = math.floor((seconds % 3600) / 60)
+    local secs = seconds % 60
+    
+    if seconds >= 999999999 then
+        return "∞ LIFETIME"
+    elseif days > 0 then
+        return string.format("%dd %dh %dm", days, hours, minutes)
+    elseif hours > 0 then
+        return string.format("%dh %dm %ds", hours, minutes, secs)
+    elseif minutes > 0 then
+        return string.format("%dm %ds", minutes, secs)
+    else
+        return string.format("%ds", secs)
+    end
+end
 
-Tab:AddButton({
-	Name = "Esp Generator",
-	Callback = function()
-      		print("button pressed")
-      loadstring(game:HttpGet("https://pastebin.com/raw/sdhVV4FP"))()
-  	end    
-})
+-- ============================================
+-- DESTROY OLD GUI
+-- ============================================
+for _, gui in pairs(CoreGui:GetChildren()) do
+    if gui.Name == "ToingHub" or gui.Name == "ToingKeySystem" then
+        gui:Destroy()
+    end
+end
 
-Tab:AddButton({
-	Name = "Esp Killer",
-	Callback = function()
-      		print("button pressed")
-      loadstring(game:HttpGet("https://raw.githubusercontent.com/trianaq765-cmd/VD/refs/heads/main/Esp%20Killer"))()
-  	end    
-})
+-- ============================================
+-- MAIN HUB FUNCTION
+-- ============================================
 
-Tab:AddButton({
-	Name = "NO FOG",
-	Callback = function()
-      		print("button pressed")
-      loadstring(game:HttpGet("https://pastebin.com/raw/t3AUuzV6"))()
-  	end    
-})
+local function CreateMainHub()
+    
+    print("🔄 Creating Main Hub...")
+    
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "ToingHub"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    ScreenGui.Parent = CoreGui
 
+    -- Get Key Tier
+    local _, _, keyTier = IsKeyValid()
+    keyTier = keyTier or "STANDARD" -- Default
+    
+    local tierData = TIER_CONFIG[keyTier]
+
+    -- Main Frame
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "MainFrame"
+    MainFrame.Size = UDim2.new(0, 550, 0, 420)
+    MainFrame.Position = UDim2.new(0.5, -275, 0.5, -210)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.Active = true
+    MainFrame.Draggable = true
+    MainFrame.Parent = ScreenGui
+
+    local MainCorner = Instance.new("UICorner")
+    MainCorner.CornerRadius = UDim.new(0, 12)
+    MainCorner.Parent = MainFrame
+
+    -- Shadow Effect
+    local Shadow = Instance.new("ImageLabel")
+    Shadow.Name = "Shadow"
+    Shadow.Size = UDim2.new(1, 30, 1, 30)
+    Shadow.Position = UDim2.new(0, -15, 0, -15)
+    Shadow.BackgroundTransparency = 1
+    Shadow.Image = "rbxasset://textures/ui/Controls/DropShadow.png"
+    Shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    Shadow.ImageTransparency = 0.5
+    Shadow.ScaleType = Enum.ScaleType.Slice
+    Shadow.SliceCenter = Rect.new(12, 12, 256-12, 256-12)
+    Shadow.ZIndex = 0
+    Shadow.Parent = MainFrame
+
+    -- Top Bar (Higher for badge)
+    local topBarHeight = 110
+    
+    local TopBar = Instance.new("Frame")
+    TopBar.Name = "TopBar"
+    TopBar.Size = UDim2.new(1, 0, 0, topBarHeight)
+    TopBar.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+    TopBar.BorderSizePixel = 0
+    TopBar.Parent = MainFrame
+
+    local TopCorner = Instance.new("UICorner")
+    TopCorner.CornerRadius = UDim.new(0, 12)
+    TopCorner.Parent = TopBar
+
+    local BottomCover = Instance.new("Frame")
+    BottomCover.Size = UDim2.new(1, 0, 0, 12)
+    BottomCover.Position = UDim2.new(0, 0, 1, -12)
+    BottomCover.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+    BottomCover.BorderSizePixel = 0
+    BottomCover.Parent = TopBar
+
+    -- ============================================
+    -- MINIMIZE & CLOSE BUTTONS
+    -- ============================================
+
+    local MinimizeButton = Instance.new("TextButton")
+    MinimizeButton.Size = UDim2.new(0, 35, 0, 35)
+    MinimizeButton.Position = UDim2.new(1, -85, 0, 10)
+    MinimizeButton.BackgroundColor3 = tierData.color
+    MinimizeButton.Text = "—"
+    MinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    MinimizeButton.TextSize = 16
+    MinimizeButton.Font = Enum.Font.GothamBold
+    MinimizeButton.BorderSizePixel = 0
+    MinimizeButton.ZIndex = 5
+    MinimizeButton.Parent = TopBar
+
+    local MinimizeCorner = Instance.new("UICorner")
+    MinimizeCorner.CornerRadius = UDim.new(0, 8)
+    MinimizeCorner.Parent = MinimizeButton
+
+    local CloseButton = Instance.new("TextButton")
+    CloseButton.Size = UDim2.new(0, 35, 0, 35)
+    CloseButton.Position = UDim2.new(1, -45, 0, 10)
+    CloseButton.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    CloseButton.Text = "×"
+    CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CloseButton.TextSize = 20
+    CloseButton.Font = Enum.Font.GothamBold
+    CloseButton.BorderSizePixel = 0
+    CloseButton.ZIndex = 5
+    CloseButton.Parent = TopBar
+
+    local CloseCorner = Instance.new("UICorner")
+    CloseCorner.CornerRadius = UDim.new(0, 8)
+    CloseCorner.Parent = CloseButton
+
+    -- ============================================
+    -- TITLE & SUBTITLE (CENTERED)
+    -- ============================================
+
+    local TitleContainer = Instance.new("Frame")
+    TitleContainer.Size = UDim2.new(0, 300, 0, 40)
+    TitleContainer.Position = UDim2.new(0.5, -150, 0, 5)
+    TitleContainer.BackgroundTransparency = 1
+    TitleContainer.ZIndex = 3
+    TitleContainer.Parent = TopBar
+
+    local Title = Instance.new("TextLabel")
+    Title.Size = UDim2.new(1, 0, 0, 20)
+    Title.Position = UDim2.new(0, 0, 0, 0)
+    Title.BackgroundTransparency = 1
+    Title.Text = tierData.titleText
+    Title.TextColor3 = tierData.color
+    Title.TextSize = 18
+    Title.Font = Enum.Font.GothamBold
+    Title.TextXAlignment = Enum.TextXAlignment.Center
+    Title.ZIndex = 3
+    Title.Parent = TitleContainer
+
+    local Subtitle = Instance.new("TextLabel")
+    Subtitle.Size = UDim2.new(1, 0, 0, 15)
+    Subtitle.Position = UDim2.new(0, 0, 0, 22)
+    Subtitle.BackgroundTransparency = 1
+    Subtitle.Text = "Violence District"
+    Subtitle.TextColor3 = Color3.fromRGB(150, 150, 150)
+    Subtitle.TextSize = 11
+    Subtitle.Font = Enum.Font.Gotham
+    Subtitle.TextXAlignment = Enum.TextXAlignment.Center
+    Subtitle.ZIndex = 3
+    Subtitle.Parent = TitleContainer
+
+    -- ============================================
+    -- TIER BADGE (FOR ALL USERS)
+    -- ============================================
+
+    local BadgeFrame = Instance.new("Frame")
+    BadgeFrame.Size = UDim2.new(0, 140, 0, 22)
+    BadgeFrame.Position = UDim2.new(0.5, -70, 0, 80)
+    BadgeFrame.BackgroundColor3 = tierData.color
+    BadgeFrame.BorderSizePixel = 0
+    BadgeFrame.ZIndex = 4
+    BadgeFrame.Parent = TopBar
+
+    local BadgeCorner = Instance.new("UICorner")
+    BadgeCorner.CornerRadius = UDim.new(0, 11)
+    BadgeCorner.Parent = BadgeFrame
+
+    -- Gradient for Premium & Lifetime
+    if tierData.glowEffect then
+        local BadgeGradient = Instance.new("UIGradient")
+        BadgeGradient.Color = ColorSequence.new{
+            ColorSequenceKeypoint.new(0, tierData.gradientColor1),
+            ColorSequenceKeypoint.new(0.5, tierData.color),
+            ColorSequenceKeypoint.new(1, tierData.gradientColor2)
+        }
+        BadgeGradient.Rotation = 45
+        BadgeGradient.Parent = BadgeFrame
+    end
+
+    local BadgeStroke = Instance.new("UIStroke")
+    BadgeStroke.Color = tierData.color
+    BadgeStroke.Thickness = 2
+    BadgeStroke.Transparency = 0.3
+    BadgeStroke.Parent = BadgeFrame
+
+    local BadgeText = Instance.new("TextLabel")
+    BadgeText.Size = UDim2.new(1, 0, 1, 0)
+    BadgeText.BackgroundTransparency = 1
+    BadgeText.Text = tierData.badgeText
+    BadgeText.TextColor3 = Color3.fromRGB(20, 20, 25)
+    BadgeText.TextSize = 10
+    BadgeText.Font = Enum.Font.GothamBold
+    BadgeText.ZIndex = 5
+    BadgeText.Parent = BadgeFrame
+
+    -- Glow Animation for Premium & Lifetime
+    if tierData.glowEffect then
+        task.spawn(function()
+            while BadgeFrame.Parent do
+                TweenService:Create(BadgeStroke, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), 
+                    {Transparency = 0}):Play()
+                task.wait(3)
+            end
+        end)
+    end
+
+    -- ============================================
+    -- PLAYER AVATAR & INFO
+    -- ============================================
+
+    local PlayerAvatar = Instance.new("ImageLabel")
+    PlayerAvatar.Size = UDim2.new(0, 50, 0, 50)
+    PlayerAvatar.Position = UDim2.new(0, 15, 0, 10)
+    PlayerAvatar.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+    PlayerAvatar.BorderSizePixel = 0
+    PlayerAvatar.Image = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. LocalPlayer.UserId .. "&width=150&height=150&format=png"
+    PlayerAvatar.ZIndex = 2
+    PlayerAvatar.Parent = TopBar
+
+    local AvatarCorner = Instance.new("UICorner")
+    AvatarCorner.CornerRadius = UDim.new(0, 10)
+    AvatarCorner.Parent = PlayerAvatar
+
+    local AvatarStroke = Instance.new("UIStroke")
+    AvatarStroke.Color = tierData.color
+    AvatarStroke.Thickness = 2
+    AvatarStroke.Parent = PlayerAvatar
+
+    -- Player Name & Display Name
+    local PlayerName = Instance.new("TextLabel")
+    PlayerName.Size = UDim2.new(0, 150, 0, 20)
+    PlayerName.Position = UDim2.new(0, 75, 0, 15)
+    PlayerName.BackgroundTransparency = 1
+    PlayerName.Text = LocalPlayer.DisplayName .. " " .. tierData.icon
+    PlayerName.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PlayerName.TextSize = 14
+    PlayerName.Font = Enum.Font.GothamBold
+    PlayerName.TextXAlignment = Enum.TextXAlignment.Left
+    PlayerName.TextTruncate = Enum.TextTruncate.AtEnd
+    PlayerName.ZIndex = 2
+    PlayerName.Parent = TopBar
+
+    local PlayerUsername = Instance.new("TextLabel")
+    PlayerUsername.Size = UDim2.new(0, 150, 0, 15)
+    PlayerUsername.Position = UDim2.new(0, 75, 0, 35)
+    PlayerUsername.BackgroundTransparency = 1
+    PlayerUsername.Text = "@" .. LocalPlayer.Name
+    PlayerUsername.TextColor3 = Color3.fromRGB(150, 150, 150)
+    PlayerUsername.TextSize = 10
+    PlayerUsername.Font = Enum.Font.Gotham
+    PlayerUsername.TextXAlignment = Enum.TextXAlignment.Left
+    PlayerUsername.TextTruncate = Enum.TextTruncate.AtEnd
+    PlayerUsername.ZIndex = 2
+    PlayerUsername.Parent = TopBar
+
+    -- Tier Status Label
+    local TierLabel = Instance.new("TextLabel")
+    TierLabel.Size = UDim2.new(0, 150, 0, 12)
+    TierLabel.Position = UDim2.new(0, 75, 0, 48)
+    TierLabel.BackgroundTransparency = 1
+    TierLabel.Text = tierData.name
+    TierLabel.TextColor3 = tierData.color
+    TierLabel.TextSize = 8
+    TierLabel.Font = Enum.Font.GothamBold
+    TierLabel.TextXAlignment = Enum.TextXAlignment.Left
+    TierLabel.ZIndex = 2
+    TierLabel.Parent = TopBar
+
+    -- ============================================
+    -- KEY DURATION DISPLAY
+    -- ============================================
+
+    local KeyStatusFrame = Instance.new("Frame")
+    KeyStatusFrame.Size = UDim2.new(1, -30, 0, 20)
+    KeyStatusFrame.Position = UDim2.new(0, 15, 0, 85)
+    KeyStatusFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    KeyStatusFrame.BorderSizePixel = 0
+    KeyStatusFrame.ZIndex = 2
+    KeyStatusFrame.Parent = TopBar
+
+    local KeyStatusCorner = Instance.new("UICorner")
+    KeyStatusCorner.CornerRadius = UDim.new(0, 6)
+    KeyStatusCorner.Parent = KeyStatusFrame
+
+    local KeyStatusStroke = Instance.new("UIStroke")
+    KeyStatusStroke.Color = tierData.color
+    KeyStatusStroke.Thickness = 1
+    KeyStatusStroke.Parent = KeyStatusFrame
+
+    local KeyStatusLabel = Instance.new("TextLabel")
+    KeyStatusLabel.Size = UDim2.new(1, -10, 1, 0)
+    KeyStatusLabel.Position = UDim2.new(0, 5, 0, 0)
+    KeyStatusLabel.BackgroundTransparency = 1
+    KeyStatusLabel.Text = "⏱️ Key Active: Loading..."
+    KeyStatusLabel.TextColor3 = tierData.color
+    KeyStatusLabel.TextSize = 10
+    KeyStatusLabel.Font = Enum.Font.GothamBold
+    KeyStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    KeyStatusLabel.ZIndex = 2
+    KeyStatusLabel.Parent = KeyStatusFrame
+
+    -- Update countdown timer
+    local function UpdateKeyStatus()
+        local isValid, remainingTime, tier = IsKeyValid()
+        if isValid then
+            local timeText = FormatTime(remainingTime)
+            
+            if tier == "LIFETIME" then
+                KeyStatusLabel.Text = "⏱️ Key Status: ∞ LIFETIME ACCESS"
+                KeyStatusLabel.TextColor3 = tierData.color
+                KeyStatusStroke.Color = tierData.color
+            else
+                KeyStatusLabel.Text = "⏱️ Key Active: " .. timeText .. " remaining"
+                
+                if remainingTime < 3600 then
+                    KeyStatusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+                    KeyStatusStroke.Color = Color3.fromRGB(255, 100, 100)
+                elseif remainingTime < 86400 then
+                    KeyStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+                    KeyStatusStroke.Color = Color3.fromRGB(255, 200, 100)
+                else
+                    KeyStatusLabel.TextColor3 = tierData.color
+                    KeyStatusStroke.Color = tierData.color
+                end
+            end
+        else
+            KeyStatusLabel.Text = "⏱️ Key Expired - Please renew"
+            KeyStatusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+            KeyStatusStroke.Color = Color3.fromRGB(255, 50, 50)
+            
+            task.wait(3)
+            ScreenGui:Destroy()
+            DeleteKeyData()
+            CreateKeySystem()
+        end
+    end
+
+    UpdateKeyStatus()
+    task.spawn(function()
+        while ScreenGui.Parent do
+            task.wait(1)
+            UpdateKeyStatus()
+        end
+    end)
+
+    -- ============================================
+    -- MINIMIZE ICON WITH DRAG FIX
+    -- ============================================
+
+    local MinimizeIcon = Instance.new("Frame")
+    MinimizeIcon.Name = "MinimizeIcon"
+    MinimizeIcon.Size = UDim2.new(0, 60, 0, 60)
+    MinimizeIcon.Position = UDim2.new(0, 10, 0, 10)
+    MinimizeIcon.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    MinimizeIcon.BorderSizePixel = 0
+    MinimizeIcon.Visible = false
+    MinimizeIcon.Active = true
+    MinimizeIcon.Parent = ScreenGui
+
+    local IconCorner = Instance.new("UICorner")
+    IconCorner.CornerRadius = UDim.new(0, 12)
+    IconCorner.Parent = MinimizeIcon
+
+    local IconStroke = Instance.new("UIStroke")
+    IconStroke.Color = tierData.color
+    IconStroke.Thickness = 2
+    IconStroke.Parent = MinimizeIcon
+
+    local IconLabel = Instance.new("TextLabel")
+    IconLabel.Size = UDim2.new(1, 0, 0.6, 0)
+    IconLabel.Position = UDim2.new(0, 0, 0, 5)
+    IconLabel.BackgroundTransparency = 1
+    IconLabel.Text = tierData.icon
+    IconLabel.TextColor3 = tierData.color
+    IconLabel.TextSize = 20
+    IconLabel.Font = Enum.Font.GothamBold
+    IconLabel.Parent = MinimizeIcon
+
+    local IconSubtext = Instance.new("TextLabel")
+    IconSubtext.Size = UDim2.new(1, 0, 0.3, 0)
+    IconSubtext.Position = UDim2.new(0, 0, 0.65, 0)
+    IconSubtext.BackgroundTransparency = 1
+    IconSubtext.Text = keyTier
+    IconSubtext.TextColor3 = Color3.fromRGB(150, 150, 150)
+    IconSubtext.TextSize = 8
+    IconSubtext.Font = Enum.Font.Gotham
+    IconSubtext.Parent = MinimizeIcon
+
+    local IconShadow = Instance.new("ImageLabel")
+    IconShadow.Size = UDim2.new(1, 20, 1, 20)
+    IconShadow.Position = UDim2.new(0, -10, 0, -10)
+    IconShadow.BackgroundTransparency = 1
+    IconShadow.Image = "rbxasset://textures/ui/Controls/DropShadow.png"
+    IconShadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    IconShadow.ImageTransparency = 0.5
+    IconShadow.ScaleType = Enum.ScaleType.Slice
+    IconShadow.SliceCenter = Rect.new(12, 12, 256-12, 256-12)
+    IconShadow.ZIndex = 0
+    IconShadow.Parent = MinimizeIcon
+
+    -- ============================================
+    -- DRAG DETECTION SYSTEM (FIXED)
+    -- ============================================
+
+    local isDraggingIcon = false
+    local dragStart = nil
+    local startPos = nil
+
+    MinimizeIcon.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            isDraggingIcon = false
+            dragStart = input.Position
+            startPos = MinimizeIcon.Position
+            
+            local dragging = false
+            
+            local moveConnection
+       
