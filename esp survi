@@ -1,0 +1,735 @@
+-- ============================================
+-- VIOLENCE DISTRICT - SURVIVOR DETECTOR
+-- Auto-detect Survivor Role + ESP
+-- Auto-rescan setiap round restart
+-- ============================================
+
+print("=== VIOLENCE DISTRICT - SURVIVOR SCANNER ===")
+print("")
+
+-- Wait for game load
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+wait(2)
+
+local Players = game:GetService("Players")
+local Teams = game:GetService("Teams")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local activeSurvivors = {}
+local isScanning = false
+local detectionCache = {}
+local lastSurvivorCount = 0
+local lastScanTime = 0
+local roundActive = false
+
+-- ============================================
+-- CONFIG
+-- ============================================
+local CONFIG = {
+    ShowSelfESP = false,           -- Show ESP on yourself
+    ShowDistance = true,           -- Show distance to survivors
+    MinTextSize = 10,
+    MaxTextSize = 16,
+    ScaleDistance = 100,
+    UpdateRate = 0.2,
+    DebugMode = true,
+    
+    -- Colors
+    ColorSurvivor = Color3.fromRGB(0, 150, 255),  -- Blue
+    ColorSelf = Color3.fromRGB(255, 255, 0),      -- Yellow (if ShowSelfESP)
+    
+    -- Round detection
+    RoundRestartCooldown = 5,
+    MinSurvivorsBeforeCleanup = 2
+}
+
+-- ============================================
+-- CLEANUP
+-- ============================================
+
+local function cleanupAllESP()
+    print("🧹 Cleaning up all Survivor ESP...")
+    
+    local cleaned = 0
+    for player, esp in pairs(activeSurvivors) do
+        if esp.highlight and esp.highlight.Parent then
+            esp.highlight:Destroy()
+            cleaned = cleaned + 1
+        end
+        if esp.nameGui and esp.nameGui.Parent then
+            esp.nameGui:Destroy()
+        end
+    end
+    
+    activeSurvivors = {}
+    lastSurvivorCount = 0
+    roundActive = false
+    
+    print("✅ Cleanup complete! Removed " .. cleaned .. " ESP")
+end
+
+-- ============================================
+-- SURVIVOR VERIFICATION
+-- ============================================
+
+local function IsActualSurvivor(player)
+    if not player or player == LocalPlayer then
+        return false, nil
+    end
+    
+    local detectedRole = nil
+    
+    -- Method 1: Team Check
+    if player.Team then
+        local teamName = player.Team.Name:lower()
+        
+        if teamName:find("survivor") then
+            detectedRole = "SURVIVOR"
+            return true, detectedRole
+        elseif teamName:find("survival") then
+            detectedRole = "SURVIVAL"
+            return true, detectedRole
+        elseif teamName:find("survi") then
+            detectedRole = "SURVI"
+            return true, detectedRole
+        elseif teamName:find("innocent") then
+            detectedRole = "INNOCENT"
+            return true, detectedRole
+        elseif teamName:find("player") then
+            detectedRole = "PLAYER"
+            return true, detectedRole
+        end
+        
+        -- Exclude killer/murderer teams
+        if teamName:find("killer") or teamName:find("murder") or 
+           teamName:find("traitor") or teamName:find("slasher") then
+            return false, nil
+        end
+    end
+    
+    -- Method 2: Role Value Check
+    local role = player:FindFirstChild("Role") or 
+                 player:FindFirstChild("PlayerRole") or 
+                 player:FindFirstChild("GameRole")
+    
+    if role and role.Value then
+        local roleValue = tostring(role.Value):lower()
+        
+        if roleValue:find("survivor") then
+            detectedRole = "SURVIVOR"
+            return true, detectedRole
+        elseif roleValue:find("survival") then
+            detectedRole = "SURVIVAL"
+            return true, detectedRole
+        elseif roleValue:find("innocent") then
+            detectedRole = "INNOCENT"
+            return true, detectedRole
+        end
+        
+        -- Exclude killer roles
+        if roleValue:find("killer") or roleValue:find("murder") then
+            return false, nil
+        end
+    end
+    
+    -- Method 3: Check all player values
+    for _, value in pairs(player:GetChildren()) do
+        if value:IsA("StringValue") or value:IsA("ObjectValue") or value:IsA("BoolValue") then
+            local valueName = value.Name:lower()
+            
+            if valueName:find("role") or valueName == "survivor" or valueName == "issurvivor" then
+                if value.Value then
+                    local val = tostring(value.Value):lower()
+                    
+                    if val:find("survivor") then
+                        detectedRole = "SURVIVOR"
+                        return true, detectedRole
+                    elseif val:find("survival") then
+                        detectedRole = "SURVIVAL"
+                        return true, detectedRole
+                    elseif val:find("innocent") then
+                        detectedRole = "INNOCENT"
+                        return true, detectedRole
+                    end
+                    
+                    -- Exclude killers
+                    if val:find("killer") or val:find("murder") then
+                        return false, nil
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Method 4: Character Attributes
+    if player.Character then
+        local humanoid = player.Character:FindFirstChild("Humanoid")
+        if humanoid then
+            local roleAttr = humanoid:GetAttribute("Role")
+            if roleAttr then
+                local attrLower = tostring(roleAttr):lower()
+                
+                if attrLower:find("survivor") then
+                    detectedRole = "SURVIVOR"
+                    return true, detectedRole
+                elseif attrLower:find("survival") then
+                    detectedRole = "SURVIVAL"
+                    return true, detectedRole
+                elseif attrLower:find("innocent") then
+                    detectedRole = "INNOCENT"
+                    return true, detectedRole
+                end
+            end
+            
+            if humanoid:GetAttribute("IsSurvivor") == true then
+                detectedRole = "SURVIVOR"
+                return true, detectedRole
+            end
+        end
+        
+        local charRole = player.Character:GetAttribute("Role")
+        if charRole then
+            local charLower = tostring(charRole):lower()
+            if charLower:find("survivor") or charLower:find("survival") then
+                detectedRole = "SURVIVOR"
+                return true, detectedRole
+            end
+        end
+    end
+    
+    return false, nil
+end
+
+-- ============================================
+-- CREATE SURVIVOR ESP
+-- ============================================
+
+local function CreateSurvivorESP(survivor, role)
+    task.spawn(function()
+        if not role then
+            role = "SURVIVOR"
+        end
+        
+        -- Skip if already exists
+        if activeSurvivors[survivor] then
+            if CONFIG.DebugMode then
+                print("⚠️ ESP already exists for:", survivor.Name)
+            end
+            return
+        end
+        
+        print("🎯 Creating ESP for Survivor:", survivor.Name)
+        
+        -- Wait for character
+        local attempts = 0
+        while not survivor.Character and attempts < 20 do
+            wait(0.5)
+            attempts = attempts + 1
+        end
+        
+        if not survivor.Character then
+            survivor.CharacterAdded:Wait()
+            wait(1)
+        end
+        
+        local character = survivor.Character
+        if not character then return end
+        
+        local head = character:WaitForChild("Head", 10)
+        local humanoidRootPart = character:WaitForChild("HumanoidRootPart", 10)
+        if not head or not humanoidRootPart then return end
+        
+        wait(0.3)
+        
+        -- === HIGHLIGHT (Blue Glow) ===
+        for _, child in pairs(character:GetChildren()) do
+            if child.Name == "SurvivorHighlight" then
+                child:Destroy()
+            end
+        end
+        
+        wait(0.1)
+        
+        local color = CONFIG.ColorSurvivor
+        if survivor == LocalPlayer and CONFIG.ShowSelfESP then
+            color = CONFIG.ColorSelf
+        end
+        
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "SurvivorHighlight"
+        highlight.Adornee = character
+        highlight.FillColor = color
+        highlight.FillTransparency = 0.6
+        highlight.OutlineColor = color
+        highlight.OutlineTransparency = 0.2
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Enabled = true
+        highlight.Parent = character
+        
+        print("  ✅ Highlight Created")
+        
+        -- === DYNAMIC TEXT (Role + Distance) ===
+        for _, child in pairs(head:GetChildren()) do
+            if child.Name == "SurvivorRole" then
+                child:Destroy()
+            end
+        end
+        
+        wait(0.1)
+        
+        local roleGui = Instance.new("BillboardGui")
+        roleGui.Name = "SurvivorRole"
+        roleGui.Adornee = head
+        roleGui.AlwaysOnTop = true
+        roleGui.Size = UDim2.new(0, 200, 0, 60)
+        roleGui.StudsOffset = Vector3.new(0, 2.5, 0)
+        roleGui.MaxDistance = math.huge
+        roleGui.LightInfluence = 0
+        roleGui.ResetOnSpawn = false
+        roleGui.Parent = head
+        
+        local container = Instance.new("Frame")
+        container.Size = UDim2.new(1, 0, 1, 0)
+        container.BackgroundTransparency = 1
+        container.BorderSizePixel = 0
+        container.Parent = roleGui
+        
+        local listLayout = Instance.new("UIListLayout")
+        listLayout.FillDirection = Enum.FillDirection.Vertical
+        listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        listLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+        listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        listLayout.Padding = UDim.new(0, 2)
+        listLayout.Parent = container
+        
+        -- Role Label
+        local roleLabel = Instance.new("TextLabel")
+        roleLabel.Name = "Role"
+        roleLabel.Size = UDim2.new(1, 0, 0.5, 0)
+        roleLabel.BackgroundTransparency = 1
+        roleLabel.Text = "👤 " .. role
+        roleLabel.TextColor3 = color
+        roleLabel.TextStrokeTransparency = 0
+        roleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        roleLabel.TextSize = CONFIG.MaxTextSize
+        roleLabel.Font = Enum.Font.GothamBold
+        roleLabel.TextScaled = false
+        roleLabel.LayoutOrder = 1
+        roleLabel.Parent = container
+        
+        -- Distance Label
+        local distanceLabel = Instance.new("TextLabel")
+        distanceLabel.Name = "Distance"
+        distanceLabel.Size = UDim2.new(1, 0, 0.3, 0)
+        distanceLabel.BackgroundTransparency = 1
+        distanceLabel.Text = "0m"
+        distanceLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+        distanceLabel.TextStrokeTransparency = 0
+        distanceLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        distanceLabel.TextSize = CONFIG.MaxTextSize - 4
+        distanceLabel.Font = Enum.Font.Gotham
+        distanceLabel.TextScaled = false
+        distanceLabel.LayoutOrder = 2
+        distanceLabel.Visible = CONFIG.ShowDistance
+        distanceLabel.Parent = container
+        
+        print("  ✅ Text Created")
+        
+        -- Store ESP data
+        activeSurvivors[survivor] = {
+            highlight = highlight,
+            nameGui = roleGui,
+            roleLabel = roleLabel,
+            distanceLabel = distanceLabel,
+            role = role,
+            lastDistance = 0,
+            lastDisplayDistance = 0,
+            lastTextSize = CONFIG.MaxTextSize,
+            lastUpdateTime = 0
+        }
+        
+        -- === SMOOTH UPDATE SYSTEM ===
+        local updateConnection
+        
+        local function updateESP()
+            local currentTime = tick()
+            if currentTime - activeSurvivors[survivor].lastUpdateTime < CONFIG.UpdateRate then
+                return
+            end
+            activeSurvivors[survivor].lastUpdateTime = currentTime
+            
+            if not roleGui or not roleGui.Parent then
+                if updateConnection then
+                    updateConnection:Disconnect()
+                end
+                return
+            end
+            
+            local localChar = LocalPlayer.Character
+            if not localChar then return end
+            
+            local playerRoot = localChar:FindFirstChild("HumanoidRootPart")
+            
+            if playerRoot and humanoidRootPart and humanoidRootPart.Parent then
+                local distance = (playerRoot.Position - humanoidRootPart.Position).Magnitude
+                
+                -- Smooth distance
+                local smoothFactor = 0.7
+                local smoothDistance = activeSurvivors[survivor].lastDistance + 
+                                     (distance - activeSurvivors[survivor].lastDistance) * smoothFactor
+                activeSurvivors[survivor].lastDistance = smoothDistance
+                
+                local displayDistance = math.floor(smoothDistance)
+                
+                -- Dynamic text size
+                local targetTextSize
+                if displayDistance < 50 then
+                    targetTextSize = CONFIG.MaxTextSize
+                elseif displayDistance < CONFIG.ScaleDistance then
+                    local scaleFactor = (displayDistance - 50) / (CONFIG.ScaleDistance - 50)
+                    targetTextSize = CONFIG.MaxTextSize - ((CONFIG.MaxTextSize - CONFIG.MinTextSize) * scaleFactor)
+                else
+                    local farScale = math.min(1, (displayDistance - CONFIG.ScaleDistance) / 100)
+                    targetTextSize = math.max(CONFIG.MinTextSize, CONFIG.MinTextSize + (2 - 2 * farScale))
+                end
+                
+                targetTextSize = math.floor(targetTextSize + 0.5)
+                
+                -- Update text size if changed
+                if math.abs(targetTextSize - activeSurvivors[survivor].lastTextSize) >= 1 then
+                    activeSurvivors[survivor].lastTextSize = targetTextSize
+                    roleLabel.TextSize = targetTextSize
+                    distanceLabel.TextSize = targetTextSize - 3
+                end
+                
+                -- Update distance text
+                if math.abs(displayDistance - activeSurvivors[survivor].lastDisplayDistance) >= 2 then
+                    activeSurvivors[survivor].lastDisplayDistance = displayDistance
+                    distanceLabel.Text = displayDistance .. "m"
+                end
+            end
+        end
+        
+        updateConnection = RunService.Heartbeat:Connect(updateESP)
+        
+        -- Cleanup on destroy
+        roleGui.AncestryChanged:Connect(function()
+            if not roleGui.Parent and updateConnection then
+                updateConnection:Disconnect()
+            end
+        end)
+        
+        -- Auto recreate if destroyed
+        highlight.AncestryChanged:Connect(function()
+            if not highlight.Parent then
+                wait(0.5)
+                if survivor and survivor.Character then
+                    local isSurvivor, detectedRole = IsActualSurvivor(survivor)
+                    if isSurvivor then
+                        activeSurvivors[survivor] = nil
+                        CreateSurvivorESP(survivor, detectedRole)
+                    end
+                end
+            end
+        end)
+        
+        print("  ✅✅ Survivor ESP Complete")
+    end)
+end
+
+-- ============================================
+-- SCAN ALL SURVIVORS
+-- ============================================
+
+local function ScanAllSurvivors()
+    if isScanning then return end
+    isScanning = true
+    
+    print("\n🔍 ===== SCANNING FOR SURVIVORS =====")
+    
+    local foundSurvivors = {}
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer or CONFIG.ShowSelfESP then
+            local isSurvivor, role = IsActualSurvivor(player)
+            
+            if isSurvivor then
+                local cacheKey = player.UserId
+                if not detectionCache[cacheKey] or (tick() - detectionCache[cacheKey]) > 5 then
+                    print("✅ SURVIVOR FOUND:", player.Name, "- Role:", role or "SURVIVOR")
+                    detectionCache[cacheKey] = tick()
+                end
+                
+                table.insert(foundSurvivors, {
+                    player = player,
+                    role = role or "SURVIVOR"
+                })
+            end
+        end
+    end
+    
+    print("")
+    print("📊 Total Survivors:", #foundSurvivors)
+    print("")
+    
+    -- Create ESP for all
+    if #foundSurvivors > 0 then
+        print("🎨 Creating ESP...")
+        for _, data in ipairs(foundSurvivors) do
+            CreateSurvivorESP(data.player, data.role)
+            wait(0.3)
+        end
+    end
+    
+    lastSurvivorCount = #foundSurvivors
+    lastScanTime = tick()
+    roundActive = true
+    
+    print("✅ ===== SCAN COMPLETE =====\n")
+    
+    isScanning = false
+    return foundSurvivors
+end
+
+-- ============================================
+-- ROUND RESTART DETECTION
+-- ============================================
+
+local function CountCurrentSurvivors()
+    local count = 0
+    for _, player in pairs(Players:GetPlayers()) do
+        if IsActualSurvivor(player) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local survivorsGoneTime = 0
+
+local function DetectRoundRestart()
+    local currentCount = CountCurrentSurvivors()
+    
+    -- If all survivors gone
+    if currentCount == 0 and lastSurvivorCount > 0 then
+        if survivorsGoneTime == 0 then
+            survivorsGoneTime = tick()
+        end
+        
+        if tick() - survivorsGoneTime >= CONFIG.RoundRestartCooldown then
+            print("🔄 ROUND ENDED (all survivors gone)")
+            survivorsGoneTime = 0
+            return true
+        end
+    else
+        survivorsGoneTime = 0
+    end
+    
+    -- If new survivors appeared
+    if currentCount >= 2 and lastSurvivorCount == 0 then
+        print("🔄 NEW ROUND (survivors spawned)")
+        return true
+    end
+    
+    -- Major change in survivor count
+    if math.abs(currentCount - lastSurvivorCount) >= 3 and lastSurvivorCount > 0 then
+        print("🔄 ROUND CHANGE (survivor count changed significantly)")
+        return true
+    end
+    
+    return false
+end
+
+local function MonitorRoundRestart()
+    task.spawn(function()
+        while true do
+            wait(3)
+            
+            if tick() - lastScanTime < 5 then
+                continue
+            end
+            
+            if DetectRoundRestart() then
+                print("\n🔄 ===== ROUND RESTART DETECTED ===== 🔄")
+                
+                cleanupAllESP()
+                wait(2)
+                ScanAllSurvivors()
+                
+                print("🔄 ===== RESCAN COMPLETE ===== 🔄\n")
+            end
+        end
+    end)
+end
+
+-- ============================================
+-- INITIAL SCAN
+-- ============================================
+
+wait(3)
+
+print("🔍 Starting initial scan...")
+print("")
+
+ScanAllSurvivors()
+
+-- ============================================
+-- REAL-TIME MONITORING
+-- ============================================
+
+print("=== MONITORING ACTIVE ===")
+print("")
+
+-- Monitor team changes
+for _, player in pairs(Players:GetPlayers()) do
+    player:GetPropertyChangedSignal("Team"):Connect(function()
+        if not roundActive then return end
+        
+        local isSurvivor, role = IsActualSurvivor(player)
+        if isSurvivor then
+            print("👤 SURVIVOR DETECTED:", player.Name, "- Role:", role)
+            
+            if not activeSurvivors[player] then
+                wait(1)
+                CreateSurvivorESP(player, role)
+            end
+        end
+    end)
+    
+    player.CharacterAdded:Connect(function()
+        if not roundActive then return end
+        
+        wait(2)
+        local isSurvivor, role = IsActualSurvivor(player)
+        if isSurvivor then
+            print("👤 SURVIVOR SPAWNED:", player.Name)
+            
+            if not activeSurvivors[player] then
+                CreateSurvivorESP(player, role)
+            end
+        end
+    end)
+end
+
+-- Monitor new players
+Players.PlayerAdded:Connect(function(player)
+    wait(1)
+    
+    player:GetPropertyChangedSignal("Team"):Connect(function()
+        if not roundActive then return end
+        
+        local isSurvivor, role = IsActualSurvivor(player)
+        if isSurvivor then
+            print("👤 NEW SURVIVOR JOINED:", player.Name)
+            
+            if not activeSurvivors[player] then
+                wait(1)
+                CreateSurvivorESP(player, role)
+            end
+        end
+    end)
+    
+    player.CharacterAdded:Connect(function()
+        if not roundActive then return end
+        
+        wait(2)
+        local isSurvivor, role = IsActualSurvivor(player)
+        if isSurvivor then
+            print("👤 SURVIVOR SPAWNED:", player.Name)
+            
+            if not activeSurvivors[player] then
+                CreateSurvivorESP(player, role)
+            end
+        end
+    end)
+end)
+
+-- Start round monitoring
+MonitorRoundRestart()
+
+print("✅ Survivor Detector Active")
+print("✅ Auto-rescan on round restart: ENABLED")
+print("✅ Dynamic text size: ENABLED")
+print("✅ Distance display:", CONFIG.ShowDistance and "ON" or "OFF")
+print("")
+
+-- ============================================
+-- MANUAL COMMANDS
+-- ============================================
+
+_G.RescanSurvivors = function()
+    print("🔄 Manual rescan...")
+    cleanupAllESP()
+    wait(0.5)
+    ScanAllSurvivors()
+end
+
+_G.CleanSurvivorESP = function()
+    cleanupAllESP()
+    print("✅ All survivor ESP removed")
+end
+
+_G.ShowSurvivorStats = function()
+    print("\n📊 ===== SURVIVOR STATS =====")
+    print("Total Survivors:", lastSurvivorCount)
+    print("ESP Active:", 0)
+    
+    local count = 0
+    for player, esp in pairs(activeSurvivors) do
+        count = count + 1
+    end
+    print("ESP Objects:", count)
+    
+    print("Round Active:", roundActive and "YES" or "NO")
+    
+    print("\nSurvivor List:")
+    local i = 1
+    for player, esp in pairs(activeSurvivors) do
+        if player and player.Parent then
+            print("  " .. i .. ". " .. player.Name .. " - " .. esp.role .. " ✅")
+        else
+            print("  " .. i .. ". [MISSING] ❌")
+        end
+        i = i + 1
+    end
+    print("==================\n")
+end
+
+_G.ToggleSelfESP = function()
+    CONFIG.ShowSelfESP = not CONFIG.ShowSelfESP
+    print("👤 Show Self ESP:", CONFIG.ShowSelfESP and "ON" or "OFF")
+    print("Rescanning...")
+    _G.RescanSurvivors()
+end
+
+_G.ToggleDistance = function()
+    CONFIG.ShowDistance = not CONFIG.ShowDistance
+    print("📏 Distance Display:", CONFIG.ShowDistance and "ON" or "OFF")
+    
+    for player, esp in pairs(activeSurvivors) do
+        if esp.distanceLabel then
+            esp.distanceLabel.Visible = CONFIG.ShowDistance
+        end
+    end
+end
+
+_G.ToggleDebug = function()
+    CONFIG.DebugMode = not CONFIG.DebugMode
+    print("🐛 Debug Mode:", CONFIG.DebugMode and "ON" or "OFF")
+end
+
+print("=== COMMANDS ===")
+print("  _G.RescanSurvivors() - Rescan all survivors")
+print("  _G.ShowSurvivorStats() - Show detailed stats")
+print("  _G.ToggleSelfESP() - Show/hide ESP on yourself")
+print("  _G.ToggleDistance() - Show/hide distance")
+print("  _G.CleanSurvivorESP() - Remove all ESP")
+print("  _G.ToggleDebug() - Toggle debug mode")
+print("")
+
+while wait(30) do
+    print("🔄 Monitoring: " .. lastSurvivorCount .. " survivor(s)")
+end
